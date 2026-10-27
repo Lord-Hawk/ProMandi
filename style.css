@@ -182,3 +182,38 @@ table.beat td.wrap{white-space:normal;min-width:80px}
 #splash{position:fixed;inset:0;z-index:1000;background:#fff;display:flex;align-items:center;justify-content:center;transition:opacity .4s}
 #splash.hide{opacity:0;pointer-events:none}
 #splash video{width:100%;max-width:720px;max-height:100%;background:#fff;object-fit:contain}
+
+/* attendance / check out / day summary */
+.homecard.violet{background:#5B3FB5}.homecard.red{background:#B42318}
+.btn.red{background:#B42318}
+.dayline{font-weight:700;font-size:18px;margin:4px 0 6px}
+.daystats{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px;margin:8px 0 12px}
+.daystats div{background:#f1f5f9;border-radius:12px;padding:10px 12px;display:grid;gap:2px}
+.daystats small{color:#64748b;font-size:12.5px}.daystats b{font-size:18px}
+.confirm{border:1px solid #fecaca;background:#fef2f2;border-radius:12px;padding:12px;margin-top:8px}
+.confirm p{margin:0 0 10px}
+.card.entry h3{margin:0}
+.entrytext{white-space:pre-wrap;font-size:15px;line-height:1.5;margin-top:8px;user-select:text}
+.homecard.indigo{background:#3730A3}
+.daylist{margin:12px 0 0;padding-left:18px;display:grid;gap:4px;font-size:15px}
+.locline{margin:4px 0 0;font-size:13.5px;color:#475569}
+.daymap svg{width:100%;height:auto;display:block}
+.beatrow{align-items:center;gap:10px;flex-wrap:wrap}.beatrow .dayline{margin:4px 0}
+.beatmarkets{margin:4px 0 8px}.modal-body ol.mklist{margin:6px 0 0;padding-left:34px;display:grid;gap:3px;max-height:40vh;overflow:auto;font-size:15px}
+
+/* round Check In (top of the home page) and Check Out (very end) */
+.roundwrap{display:flex;justify-content:center;margin:10px 0 18px}
+.roundwrap.in{margin:16px 0 34px}.roundwrap.out{margin:28px 0 20px}
+.roundbtn{width:156px;height:156px;border-radius:50%;border:0;color:#fff;font:inherit;display:grid;place-content:center;gap:6px;text-align:center;cursor:pointer;box-shadow:0 14px 28px -12px rgba(15,23,42,.55),inset 0 -6px 0 rgba(0,0,0,.12)}
+.roundbtn b{font-size:21px;letter-spacing:.02em}.roundbtn small{font-size:12.5px;opacity:.92;padding:0 14px}
+.roundbtn.in{background:#0F7A55}.roundbtn.out{background:#B42318}
+.roundbtn:active{transform:scale(.97)}
+/* Previous Entries */
+.entrybox{display:flex;align-items:center;gap:10px;background:#fff;border:1px solid #dbe3ef;border-radius:14px;padding:14px 12px 14px 16px;margin:0 0 10px;box-shadow:0 1px 3px rgba(15,23,42,.06)}
+.eb-text{flex:1;min-width:0;display:grid;gap:3px}.eb-text b{font-size:16px;overflow-wrap:anywhere}.eb-text span{font-size:13.5px;color:#64748b}
+.eb-acts{display:flex;gap:8px;flex:none}
+.iconsq{width:44px;height:44px;border-radius:12px;border:1px solid #cbd5e1;background:#f8fafc;color:#1e3a8a;display:grid;place-items:center;cursor:pointer;padding:0}
+.iconsq:disabled{opacity:.35;cursor:default}
+.iconsq.topedit{background:rgba(255,255,255,.14);border-color:rgba(255,255,255,.35);color:#fff;flex:none}
+fieldset.ro{border:0;margin:0;padding:0;min-width:0}
+fieldset.ro .combo-arrow,fieldset.ro .x,fieldset.ro .btn.ghost{display:none}

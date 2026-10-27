@@ -44,7 +44,7 @@ p{margin:0}
 .btn svg{flex:none}
 
 /* header */
-header.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+header.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:var(--bg);border-bottom:1px solid var(--line)}
 body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:10;background:var(--bg)}
 header.top .wrap{display:flex;align-items:center;justify-content:space-between;gap:16px;padding-block:10px}
 .brand{display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--navy);font:800 20px var(--f-display)}
@@ -66,8 +66,8 @@ header.top .wrap{display:flex;align-items:center;justify-content:space-between;g
 .drawer nav a span{font:500 12px var(--f-mono);opacity:.6}
 .drawer .dfoot{margin-top:auto;padding:14px 6px 0;border-top:1px solid var(--line);font-size:14px;color:var(--muted)}
 /* one page at a time */
-.page{display:none;min-height:calc(100vh - 150px)}
-.page.on{display:block;animation:pgin .25s ease}
+.page{display:none;min-height:70vh}
+.page.on{display:block}
 @keyframes pgin{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 .next{display:flex;justify-content:flex-end}
 .next a{font:700 16px var(--f-body);text-decoration:none;color:var(--navy)}
@@ -202,11 +202,10 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:10px;justify-content:space-between}
 
 /* home: benefit cards (replaces the old format strip) */
 .benefits .wrap{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:18px;padding-block:8px 8px}
-.ben{background:var(--surface);border:1px solid var(--line);border-radius:20px;padding:24px 22px 26px;display:grid;gap:10px;align-content:start;position:relative;overflow:hidden;box-shadow:0 18px 40px -34px rgba(22,48,111,.55)}
-.ben::before{content:"";position:absolute;left:0;top:0;right:0;height:4px;background:linear-gradient(90deg,var(--navy),var(--blue))}
-.ben:nth-child(even)::before{background:linear-gradient(90deg,var(--gold),#E8A317)}
+.ben{background:var(--surface);border:1px solid var(--line);border-top:4px solid var(--navy);border-radius:20px;padding:22px 22px 26px;display:grid;gap:10px;align-content:start}
+.ben:nth-child(even){border-top-color:var(--gold)}
 .ben-ic{width:54px;height:54px;border-radius:16px;display:grid;place-items:center;margin-bottom:6px}
-.ben-ic.n{background:color-mix(in srgb,var(--blue) 13%,var(--surface));color:var(--navy)}
+.ben-ic.n{background:#E3EBFA;color:var(--navy)}
 .ben-ic.g{background:var(--gold-soft);color:var(--gold)}
 .ben h3{font:700 clamp(19px,2.2vw,21px)/1.25 var(--f-display);color:var(--navy)}
 .ben p{color:var(--muted);font-size:16.5px;line-height:1.55}
@@ -267,129 +266,11 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:10px;justify-content:space-between}
 <section class="benefits" aria-label="Why ProMandi">
   <div class="wrap">
     <article class="ben"><span class="ben-ic n"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 3h11a3 3 0 0 1 3 3v15H8a3 3 0 0 1-3-3z"/><path d="M5 18a3 3 0 0 1 3-3h11"/><path d="M9 7h6M9 10.5h4"/></svg></span><h3>No more notebooks</h3><p>Order slips, WhatsApp photos and scattered Excel sheets become one clean record.</p></article>
-    <article class="ben"><span class="ben-ic g"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m20 20-4.6-4.6"20px;height:120px;border-radius:50%;background:var(--navy);color:var(--surface);display:grid;place-items:center;font:800 40px var(--f-display);letter-spacing:.02em}
-.creator dl{display:grid;grid-template-columns:max-content 1fr;gap:6px 18px;margin:14px 0 0}
-.creator dt{color:var(--muted);font-size:15px}
-.creator dd{margin:0;font-weight:600;min-width:0}
-@media (max-width:620px){.creator{grid-template-columns:1fr}.creator dl{grid-template-columns:1fr}.creator dt{margin-top:6px}}
-
-/* contact */
-.contact{background:var(--navy);color:var(--surface)}
-:root .contact h2{color:var(--surface)}
-.contact .wrap{padding-block:56px}
-.contact .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr));gap:16px;margin-top:26px}
-.card{background:color-mix(in srgb,var(--surface) 10%,transparent);border:1px solid color-mix(in srgb,var(--surface) 25%,transparent);border-radius:14px;padding:16px;display:grid;gap:6px;min-width:0}
-.card span{font-size:13px;letter-spacing:.1em;text-transform:uppercase;opacity:.8}
-.card b{font:500 15.5px var(--f-mono);overflow-wrap:break-word;word-break:break-word;user-select:all}
-.card .acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px}
-.card a,.card button{font:600 14px var(--f-body);color:var(--navy);background:var(--surface);border:0;border-radius:8px;padding:7px 12px;text-decoration:none;cursor:pointer}
-footer{padding-block:22px;color:var(--muted);font-size:14px}
-footer .wrap{display:flex;flex-wrap:wrap;gap:10px;justify-content:space-between}
-.toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:99px;font-weight:600;opacity:0;transition:opacity .2s;pointer-events:none}
-.toast.show{opacity:1}
-@media (prefers-reduced-motion:reduce){*{transition:none!important}}
-
-/* features gallery: real app screens with one-line captions */
-.gallery{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:34px 26px}
-@media (max-width:980px){.gallery{grid-template-columns:repeat(2,minmax(0,1fr))}}
-.shot{margin:0;display:grid;gap:12px;min-width:0;align-content:start;align-self:start}
-.phone{background:#0E1A33;border-radius:30px;padding:8px;box-shadow:0 26px 50px -30px rgba(22,48,111,.6);transition:transform .2s}
-.phone img{display:block;width:100%;height:auto;border-radius:23px;aspect-ratio:540/900;object-fit:cover;object-position:top}
-.shot:hover .phone{transform:translateY(-4px)}
-.shot figcaption{display:grid;gap:2px;padding-inline:4px}
-.shot figcaption .tag{font:500 12px var(--f-mono);color:var(--gold);letter-spacing:.04em}
-.shot figcaption b{font:700 17px var(--f-display);color:var(--navy)}
-.shot figcaption span:not(.tag){color:var(--muted);font-size:15px;line-height:1.4}
-.swipe{display:none}
-.roles2{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:40px;align-items:center}
-.duo{display:grid;grid-template-columns:1fr 1fr;gap:20px}
-.duo figcaption{text-align:center}
-.chips{list-style:none;margin:0;padding:0;display:grid;gap:12px}
-.chips li{display:grid;gap:2px;background:var(--surface);border:1px solid var(--line);border-left:5px solid var(--navy);border-radius:12px;padding:14px 16px}
-.chips b{font:700 16px var(--f-display);color:var(--navy)}
-.chips span{color:var(--muted);font-size:15px}
-@media (max-width:820px){.roles2{grid-template-columns:1fr}}
-@media (max-width:720px){
-  .swipe{display:block;font-size:15px!important;color:var(--gold)!important;font-weight:600}
-  .gallery{display:flex;overflow-x:auto;scroll-snap-type:x mandatory;gap:16px;margin-inline:calc(-1 * max(16px, env(safe-area-inset-left, 0px)));padding:4px max(16px, env(safe-area-inset-left, 0px)) 18px;scrollbar-width:none}
-  .gallery::-webkit-scrollbar{display:none}
-  .gallery .shot{flex:0 0 68%;scroll-snap-align:center}
-}
-
-/* install page: device tabs + picture steps */
-.ptabs{display:inline-flex;gap:6px;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:5px;margin-bottom:26px;flex-wrap:wrap}
-.ptabs button{border:0;background:none;font:700 15px var(--f-body);color:var(--muted);padding:10px 16px;border-radius:10px;cursor:pointer}
-.ptabs button[aria-selected="true"]{background:var(--navy);color:var(--surface)}
-.gallery.steps3{grid-template-columns:repeat(3,minmax(0,1fr))}
-.gallery.steps3 .phone{max-width:280px;width:100%;justify-self:center}
-.gallery.steps3 .shot{justify-items:center;text-align:center}.gallery.steps3 .laptop{width:100%}
-.laptop{background:#0E1A33;border-radius:14px;padding:8px;box-shadow:0 26px 50px -30px rgba(22,48,111,.6)}
-.laptop img{display:block;width:100%;height:auto;border-radius:8px;aspect-ratio:8/5}
-.install .note{margin-top:18px}
-.reg-chips{margin-top:30px;grid-template-columns:1fr 1fr}
-@media (max-width:820px){.reg-chips{grid-template-columns:1fr}}
-@media (max-width:980px){.gallery.steps3{grid-template-columns:repeat(3,minmax(0,1fr))}}
-@media (max-width:720px){.gallery.steps3 .shot{flex:0 0 68%}.pset[data-p="pc"] .gallery .shot{flex:0 0 86%}}
-</style>
-
-</head>
-<body>
-<header class="top">
-  <div class="wrap">
-    <a class="brand" href="#home"><img src="site/6c8262ee4f.png" alt="ProMandi">ProMandi</a>
-    <div class="hdr-acts">
-      <a class="btn primary" href="https://lord-hawk.github.io/ProMandi" target="_blank" rel="noopener" style="padding:10px 16px;font-size:15px">Open app</a>
-      <button class="menu-btn" id="menuBtn" type="button" aria-label="Open menu" aria-controls="drawer" aria-expanded="false">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
-      </button>
-    </div>
-  </div>
-</header>
-<div class="scrim" id="scrim"></div>
-<aside class="drawer" id="drawer" aria-label="Menu" aria-hidden="true">
-  <div class="dhead"><img src="site/6c8262ee4f.png" alt="ProMandi">
-    <button class="menu-btn" id="menuClose" type="button" aria-label="Close menu"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
-  <nav aria-label="Pages">
-    <a href="#home">Home <span>01</span></a>
-    <a href="#features">Features <span>02</span></a>
-    <a href="#install">Install <span>03</span></a>
-    <a href="#pricing">Pricing <span>04</span></a>
-    <a href="#creator">Creator <span>05</span></a>
-    <a href="#contact">Contact <span>06</span></a>
-  </nav>
-  <div class="dfoot">Driving Sales. Defining Growth.</div>
-</aside>
-<main id="pages">
-
-<div class="page" data-page="home" data-title="Home">
-<section class="hero">
-  <div class="wrap">
-    <div>
-      <p class="eyebrow">Field sales app for distributors</p>
-      <h1 style="margin-top:14px">Every visit, order and payment, logged <em>at the counter.</em></h1>
-      <p class="lead">ProMandi gives your DSOs one app for the whole beat: log the visit, take the order, record the payment and share a summary with the counter in seconds. Everything lands in your own Google Sheet, ready for your accountant.</p>
-      <div class="ctas">
-        <a class="btn primary" href="https://lord-hawk.github.io/ProMandi" target="_blank" rel="noopener">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="M6.5 10.5 12 16l5.5-5.5"/><path d="M4 20h16"/></svg>
-          Install ProMandi</a>
-        <a class="btn gold" href="#contact">Talk to us</a>
-      </div>
-      <p class="applink">App link: <a class="mono" href="https://lord-hawk.github.io/ProMandi" target="_blank" rel="noopener">lord-hawk.github.io/ProMandi</a></p>
-    </div>
-    <div class="stage">
-      <video src="site/0efb64f281.mp4" poster="site/91d44da412.png" autoplay muted loop playsinline aria-label="ProMandi logo animation"></video>
-    </div>
+    <article class="ben"><span class="ben-ic g"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m20 20-4.6-4.6"/><path d="M8 10.5h5M10.5 8v5"/></svg></span><h3>The full picture, instantly</h3><p>Visits, orders, invoices, payments and pending dues for any counter, in one view.</p></article>
+    <article class="ben"><span class="ben-ic n"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/><path d="M12 14.5v2.5"/></svg></span><h3>Controlled access</h3><p>Every device is approved by OTP. No approval, no access, and you can block it any time.</p></article>
+    <article class="ben"><span class="ben-ic g"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21V11"/><path d="M12 13c0-4-3-6-7-6 0 4 3 6 7 6z"/><path d="M12 11c0-4 3-6.5 7-6.5 0 4-3 6.5-7 6.5z"/></svg></span><h3>Grows with your team</h3><p>Add DSOs, managers, markets and products any time, right from your own Google Sheet.</p></article>
   </div>
 </section>
-
-<div class="strip" aria-label="What ProMandi records">
-  <div class="wrap">
-    <div><b>Tue_4</b><span>Today's beat, from your Year Calendar</span></div>
-    <div><b>20/10/26-Arjun-1</b><span>Order numbers given by the server</span></div>
-    <div><b>INV/240/26-27</b><span>Invoice numbers by financial year</span></div>
-    <div><b>Cash · UPI · Cheque · Card</b><span>Every payment mode, in one entry</span></div>
-  </div>
-</div>
 
 <div class="block" style="padding:0"><div class="wrap next" style="padding-block:24px 40px"><a href="#features">See all features →</a></div></div>
 </div>

@@ -54,7 +54,8 @@
   }
   window.addEventListener('error', function (e) {
     var t = e.target;
-    if (t && (t.tagName === 'VIDEO' || t.tagName === 'SOURCE')) return;   // a start-up video format this phone can't play: not an error                    // the start-up video failing just skips the animation
+    if (t && (t.tagName === 'VIDEO' || t.tagName === 'SOURCE')) return;   // a start-up video format this phone can't play: not an error
+    if (t && t.dataset && t.dataset.quiet) return;                         // a helper loaded on demand reports its own failure
     if (t && t !== window && (t.src || t.href)) show('Could not load ' + (t.src || t.href));
     else show((e.message || 'Error') + (e.filename ? '  (' + e.filename.split('/').slice(-2).join('/') + ':' + e.lineno + ')' : ''));
   }, true);

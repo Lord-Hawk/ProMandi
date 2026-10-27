@@ -1,6 +1,6 @@
 /* ProMandi service worker: keeps the app files so the app opens without internet. Bump CACHE when you upload new files. */
-const CACHE = 'promandi-v11';
-const FILES = ['./', 'index.html', 'style.css', 'manifest.webmanifest', 'js/config.js', 'js/util.js', 'js/model.js', 'js/ui.js', 'js/app.js',
+const CACHE = 'promandi-v23';
+const FILES = ['./', 'index.html', 'style.css', 'manifest.webmanifest', 'js/config.js', 'js/util.js', 'js/model.js', 'js/ui.js', 'js/app.js', 'js/pdf-lib.min.js',
                'icons/icon-192.png', 'icons/icon-512.png', 'icons/logo-bar.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => {

@@ -6,6 +6,7 @@
   const TERMS = ['COD', '15 Days', '30 Days', '45 Days'], TERM_DAYS = { 'COD': 0, '15 Days': 14, '30 Days': 28, '45 Days': 42 };
   const POSITIONS = ['Head of Operations', 'Manager', 'Accountant', 'DSO'];
   const NO_BEAT = '(no beat)';
+  const BEATS = []; ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].forEach(d => [1, 2, 3, 4].forEach(w => BEATS.push(d + '_' + w)));   // Mon_1 … Mon_4, Tue_1 … Sat_4
   const root = document.getElementById('app');
 
   /* ------------------------------------------------------------------ storage (every access guarded) */
@@ -163,7 +164,7 @@
         h('button', { class: 'btn big', onclick: () => sync(true) }, 'Check again'))));
   }
   function deregister(msg) {
-    ['token', 'profile', 'snapshot', 'verifiedAt', 'outbox', 'failed', 'rdata', 'rep'].forEach(k => store.del(k)); RD.data = null;
+    ['token', 'profile', 'snapshot', 'verifiedAt', 'outbox', 'failed', 'rdata', 'rep', 'day', 'ord'].forEach(k => store.del(k)); S.day = null; S.ord = null; RD.data = null;
     S.profile = null; S.snapshot = null; S.outbox = []; S.failed = []; delete mem.token;
     start(msg);
   }
@@ -174,12 +175,12 @@
   setInterval(() => { if (!document.hidden) { sync(false); if (currentView && currentView.tick) currentView.tick(); } }, 20000);
 
   /* ------------------------------------------------------------------ shell (top bar + view) */
-  function shell(title, onBack) {
+  function shell(title, onBack, extra) {
     statusEl = h('span', { class: 'status' });
     const bar = h('header', { class: 'top' },
       onBack ? h('button', { class: 'back', onclick: onBack, 'aria-label': 'Home' }, '←') : h('img', { class: 'logo', src: 'icons/logo-bar.png', alt: 'ProMandi' }),
       h('div', { class: 'who' }, h('b', {}, title || ''), h('small', {}, `${S.profile.name} · ${S.profile.title || S.profile.position}`)),
-      statusEl, h('button', { class: 'sync', onclick: () => { sync(true); U.toast('Syncing…'); }, 'aria-label': 'Sync now' }, '↻'));
+      statusEl, extra || null, h('button', { class: 'sync', onclick: () => { sync(true); U.toast('Syncing…'); }, 'aria-label': 'Sync now' }, '↻'));
     const main = h('main', { class: 'page' });
     root.replaceChildren(bar, main);
     setStatus();
@@ -241,6 +242,7 @@
   }
 
   /* ------------------------------------------------------------------ homes */
+  const roundBtn = (title, caption, cls, fn) => h('div', { class: 'roundwrap ' + cls }, h('button', { type: 'button', class: 'roundbtn ' + cls, onclick: fn }, h('b', {}, title), h('small', {}, caption)));
   const card = (title, caption, cls, fn) => h('button', { class: 'homecard ' + cls, onclick: fn }, h('b', {}, title), h('span', {}, caption));
   function failedList() {
     if (!S.failed.length) return null;
@@ -249,15 +251,40 @@
         f.job ? h('button', { class: 'btn small', onclick: () => { S.failed.splice(i, 1); save('failed'); S.outbox.push(f.job); save('outbox'); home(); sync(false); } }, 'Try again') : null,
         h('button', { class: 'btn small gray', onclick: () => { S.failed.splice(i, 1); save('failed'); home(); } }, 'Discard')))));
   }
+  /* Head of Operations: the main home has "As DSO", "As Manager", "As Accountant" – each opens that position's home page.
+     asRole remembers which one is open, so the ← on its screens comes back to it (and from it, to the Head's main home). */
+  let asRole = '';
   function home() {
-    const pos = S.profile.position;
-    const main = shell('Home');
+    const own = S.profile.position, isHead = own === 'Head of Operations';
+    if (!isHead) asRole = '';
+    if (isHead && !asRole) {
+      const main = shell('Home');
+      main.append(
+        card('AS DSO', 'Log visits and payments (“Logged by”), beat details and counter search', 'blue', () => { asRole = 'DSO'; home(); }),
+        card('AS MANAGER', 'The Manager’s home page – log visits and payments, beat details and counter search', 'violet', () => { asRole = 'Manager'; home(); }),
+        card('AS ACCOUNTANT', 'Inward and outward invoices, edit a previous invoice, counter search', 'green', () => { asRole = 'Accountant'; home(); }),
+        card('GENERATE SUMMARY', 'A DSO’s work between two dates, day by day, as a PDF', 'indigo', () => rangeSummaryView()));
+      const fl = failedList(); if (fl) main.append(fl);
+      currentView = { onData() {} };
+      return;
+    }
+    const pos = isHead ? asRole : own;
+    const main = isHead ? shell('As ' + asRole, () => { asRole = ''; home(); }) : shell('Home');
     currentView = { onData() {} };
-    if (pos === 'DSO' || pos === 'Manager') main.append(card('LOG VISITS', 'Log the visits to the counters of each day', 'blue', () => visitView()), card('LOG PAYMENTS', 'Payments received outside of visits', 'green', () => payView()));
+    const logCards = () => [card('LOG VISITS', 'Log the visits to the counters of each day', 'blue', () => visitView()), card('LOG PAYMENTS', 'Payments received outside of visits', 'green', () => payView())];
+    if (isFieldRole()) {                                          // DSO / Manager: Attendance -> work -> Check Out -> day ended
+      const d = day();
+      if (!d.in) main.append(roundBtn('CHECK IN', 'Start your day', 'in', () => attendanceView()));
+      else if (!d.out) main.append(...logCards(), card('PREVIOUS ENTRIES', 'Today’s visits and payments – view or edit them', 'slate', () => entriesView()));
+      else main.append(card('DAY ENDED', 'You checked out at ' + d.out + '. Tap to see and share today’s summary', 'slate', () => daySummaryView()));
+    } else if (isHead && pos !== 'Accountant') main.append(...logCards());          // the Head as DSO / Manager: no attendance, "Logged by" instead
     if (pos !== 'Accountant') main.append(card('BEAT DETAILS', 'View markets of any beat, targets achieved and payments pending', 'gold', () => beatView()));
-    else if (pos === 'Accountant') main.append(card('LOG INWARD INVOICES', 'Log the products that came in', 'green', () => inwardView()), card('LOG OUTWARD INVOICES', 'Log the invoices raised to the counters', 'blue', () => outwardView()), card('EDIT PREVIOUS INVOICE', 'Change, add or remove products of an outward invoice, or cancel it', 'slate', () => editView()));
+    else main.append(card('LOG INWARD INVOICES', 'Log the products that came in', 'green', () => inwardView()), card('LOG OUTWARD INVOICES', 'Log the invoices raised to the counters', 'blue', () => outwardView()), card('EDIT PREVIOUS INVOICE', 'Change, add or remove products of an outward invoice, or cancel it', 'slate', () => editView()));
     main.append(card('COUNTER SEARCH', "View any counter's visits, orders, invoices and more", 'teal', () => counterView()));
+    if (isFieldRole() && day().in && !day().out) main.append(roundBtn('CHECK OUT', 'Check In: ' + day().in, 'out', () => checkoutView()));
     const fl = failedList(); if (fl) main.append(fl);
+    const key = dayKey();
+    currentView = { onData() { if (dayKey() !== key) home(); }, tick() { if (dayKey() !== key) home(); } };   // a new day / attendance changed elsewhere
   }
 
   /* ------------------------------------------------------------------ shared pieces */
@@ -541,12 +568,11 @@
     const out = h('div');
     const inr0 = x => '₹' + Math.round(x).toLocaleString('en-IN');
     const sel = picks ? h('select', { class: 'inp' }, h('option', { value: '' }, '---- Select ----')) : null;
-    const BEATS = []; ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].forEach(d => [1, 2, 3, 4].forEach(w => BEATS.push(d + '_' + w)));   // Mon_1 … Mon_4, Tue_1 … Sat_4
     /* Beat dropdown for everyone: all the beats, today's beat chosen at the start and shown as "Today (<beat>)" */
     const beatSel = h('select', { class: 'inp' });
     let beatDay = '';
     function fillBeats() {
-      const day = U.todayIso(), tb = ((RD.data && RD.data.cal) || {})[day] || model.beatForDate(day) || '';
+      const day = U.todayIso(), tb = beatFor(day);
       const keep = beatDay === day ? beatSel.value : tb;                    // a new day: today's beat again
       beatDay = day;
       const list = BEATS.slice(); if (tb && !list.includes(tb)) list.unshift(tb);
@@ -618,16 +644,511 @@
                     tick() { if (beatDay !== U.todayIso()) { fillBeats(); load(lastDso); } } };     // after midnight: the new day's beat
   }
 
-  /* ------------------------------------------------------------------ DSO: visit */
-  function visitView() {
-    const main = shell('Log Visits', home);
+
+  /* ------------------------------------------------------------------ Attendance ("Working Today"), Check Out ("End Day") and the day's PDF (DSO / Manager) */
+  const isFieldRole = () => !!S.profile && (S.profile.position === 'DSO' || S.profile.position === 'Manager');
+  S.day = store.get('day', null);
+  function day() {                                               // today's attendance + the summaries of today's entries, in order
+    const t = U.todayIso();
+    if (!S.day || S.day.date !== t || S.day.who !== S.profile.name) { S.day = { date: t, who: S.profile.name, in: '', out: '', entries: [], serverText: '' }; save('day'); }
+    const a = S.snapshot && S.snapshot.attendance;               // what the server knows (e.g. after a reinstall, or another phone)
+    if (a && a.date === t) {
+      let ch = false;
+      if (a.in && !S.day.in) { S.day.in = a.in; ch = true; }
+      if (a.beat && !S.day.beat) { S.day.beat = a.beat; ch = true; }
+      if (a.out && !S.day.out) { S.day.out = a.out; ch = true; }
+      if (a.summary && !S.day.serverText) { S.day.serverText = a.summary; S.day.serverTimes = a.times || ''; S.day.serverLocs = a.locs || ''; ch = true; }
+      if (a.inLoc && !S.day.inLoc) { S.day.inLoc = a.inLoc; ch = true; }
+      if (a.outLoc && !S.day.outLoc) { S.day.outLoc = a.outLoc; ch = true; }
+      if (ch) save('day');
+    }
+    return S.day;
+  }
+  const calBeat = iso => ((RD.data && RD.data.cal) || {})[iso] || model.beatForDate(iso) || '';
+  function beatFor(iso) { if (isFieldRole()) { const d = day(); if (d.date === iso && d.beat) return d.beat; } return calBeat(iso); }
+  const dayKey = () => (isFieldRole() ? [day().date, !!day().in, !!day().out].join('|') : '');
+  const canWork = () => !isFieldRole() || (!!day().in && !day().out);
+  const nowTime = () => new Date().toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true }).toUpperCase();
+  const dmyFull = iso => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || ''); return m ? m[3] + '/' + m[2] + '/' + m[1] : ''; };
+  /* today's orders per person – what the server knew at the last sync + what this phone made since – for "Order No." and "Daily Cumulative" */
+  S.ord = store.get('ord', null);
+  function ordersOf(who, iso) {
+    const k = norm(who), out = {};
+    const sv = S.snapshot && S.snapshot.ordersToday;
+    if (sv && sv.date === iso) Object.assign(out, (sv.byName || {})[k] || {});
+    if (S.ord && S.ord.date === iso) Object.assign(out, (S.ord.byName || {})[k] || {});
+    return out;
+  }
+  function nextOrderNo(who, iso) {                               // same rule as the server: d/m/yy-Name-N, N = next free
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso), pre = (+m[3]) + '/' + (+m[2]) + '/' + m[1].slice(2) + '-' + who + '-';
+    const used = Object.keys(ordersOf(who, iso)).filter(n => n.toLowerCase().indexOf(pre.toLowerCase()) === 0);
+    const top = used.reduce((a, n) => Math.max(a, +n.slice(pre.length) || 0), 0);
+    return pre + (Math.max(top, used.length) + 1);
+  }
+  function noteOrder(who, no, value) {
+    const iso = U.todayIso();
+    if (!S.ord || S.ord.date !== iso) S.ord = { date: iso, byName: {} };
+    const k = norm(who); (S.ord.byName[k] || (S.ord.byName[k] = {}))[no] = value; save('ord');
+  }
+  function noteDayOrder(types) { if (!isFieldRole()) return; const d = day(); (d.orders || (d.orders = [])).push(types); save('day'); }
+  function noteDayPay(pays) { if (!isFieldRole()) return; const d = day(); (d.pays || (d.pays = [])).push(pays.map(p => ({ mode: p.mode, amount: p.amount }))); save('day'); }
+  /* "Day End Order Report" – the exact figures come from the server (they include anything the Head logged for this person);
+     without internet: this phone's own entries today + the month so far as of the last sync */
+  const WEEKDAYS = { mon: 'Monday', tue: 'Tuesday', wed: 'Wednesday', thu: 'Thursday', fri: 'Friday', sat: 'Saturday', sun: 'Sunday' };
+  const beatDay = b => { const m = /^([A-Za-z]{3})_(\d+)$/.exec(sval(b)); return m ? (WEEKDAYS[m[1].toLowerCase()] || m[1]) + ' ' + m[2] : (sval(b) || '-'); };
+  function localTotals(d) {
+    const types = {}, pay = {}; let orderToday = 0, payToday = 0;
+    const ents = d.entries.filter(e => e.form);
+    const ordersL = ents.length ? ents.map(e => e.types || {}) : (d.orders || []), paysL = ents.length ? ents.map(e => e.pays || []) : (d.pays || []);
+    ordersL.forEach(t => Object.keys(t).forEach(k => { types[k] = (types[k] || 0) + t[k]; orderToday += t[k]; }));
+    paysL.forEach(list => list.forEach(p => { pay[p.mode] = (pay[p.mode] || 0) + p.amount; payToday += p.amount; }));
+    const mb = S.snapshot && S.snapshot.monthBefore && S.snapshot.monthBefore.date === d.date ? S.snapshot.monthBefore : { orders: 0, payments: 0 };
+    return { types, orderToday, orderMonthBefore: mb.orders || 0, pay, payToday, payMonthBefore: mb.payments || 0, beat: model.beatForDate(d.date) };
+  }
+  function dayReportText(name, d, t) {
+    const r0 = x => Math.round(x), types = Object.keys(t.types || {}).filter(k => t.types[k]).sort((a, b) => a.localeCompare(b));
+    const modes = ['Cash', 'UPI', 'Cheque', 'Card'].filter(m => t.pay && t.pay[m]);
+    return ['** *_DAY  END  ORDER  REPORT_* **', '',
+      'Name: ' + name, 'Beat day: ' + beatDay(d.beat || t.beat || calBeat(d.date)), 'Date: ' + dmyFull(d.date),
+      ...types.map(k => ' _' + k + ' value_: ' + money(r0(t.types[k]))),
+      '', ' *Total value*: ' + money(r0(t.orderToday)), ' *_Cumulative value_*: ' + money(r0(t.orderMonthBefore + t.orderToday)),
+      '', '** *_PAYMENT REPORT_* **',
+      ...modes.map(m => '_' + m + '_: ' + money(t.pay[m])),
+      '*Total Value*: ' + money(t.payToday), '_*Cumulative Value*_: ' + money(t.payMonthBefore + t.payToday)].join('\n');
+  }
+  function addEntry(kind, text, loc, extra) { if (!isFieldRole()) return; const d = day(); d.entries.push(Object.assign({ kind, time: nowTime(), text, loc: loc || Loc.value || '' }, extra || {})); save('day'); }
+  function updateEntry(ent, job) {                                 // an edited entry keeps its place, time and location
+    const d = day(), i = d.entries.findIndex(e => e.id === ent.id); if (i < 0) return;
+    d.entries[i] = Object.assign({}, d.entries[i], job.entry, { text: job.summary, edited: nowTime() }); save('day');
+  }
+  const entryNo = ent => { const i = day().entries.findIndex(e => e.id === ent.id); return i < 0 ? '' : String(i + 1); };
+  function dayEntries(d) {                                       // [{kind, time, text, loc}] – this phone's list, else the copy saved on the server
+    if (d.entries.length) return d.entries;
+    return parseDayText(d.serverText, d.serverTimes, d.serverLocs);
+  }
+  function parseDayText(text, times, locs) {                     // 'Entry 1:\n…\n\nEntry 2:\n…' + 'Visit · 10:15 AM, …' + 'lat, lon | lat, lon' -> [{kind, time, text, loc}]
+    if (!text) return [];
+    const tl = String(times || '').split(/,\s*(?=[A-Za-z])/).filter(Boolean), ll = String(locs || '').split(/\s*\|\s*/);
+    return text.split(/^Entry \d+:\s*$/m).map(x => x.trim()).filter(Boolean).map((t, i) => {
+      const m = (tl[i] || '').split(/\s*·\s*/);
+      return { kind: m[0] || (/^_?\*?Visit/.test(t) ? 'Visit' : 'Payment'), time: m[1] || '', text: t, loc: ll[i] && ll[i] !== '-' ? ll[i] : '' };
+    });
+  }
+  const dayText = d => dayEntries(d).map((e, i) => 'Entry ' + (i + 1) + ':\n' + e.text).join('\n\n');
+  const locText = l => (l ? String(l).trim() : 'not recorded');
+  function locNow(ms) {                                          // the freshest location we can get within ms
     Loc.refresh();
-    const msg = msgBox(), dso = S.profile.dso || S.profile.name;
+    return new Promise(res => { const t0 = Date.now(), iv = setInterval(() => { if (!Loc.busy || Date.now() - t0 > ms) { clearInterval(iv); res(Loc.value || ''); } }, 250); });
+  }
+
+  function attendanceView() {
+    if (!isFieldRole() || day().in) return home();
+    const main = shell('Check In', home);
+    Loc.refresh();
+    const msg = msgBox();
+    const btn = h('button', { class: 'btn big', onclick: mark }, 'Working Today');
+    const dayLine = h('p', { class: 'dayline' });
+    const drawLine = () => { const b = beatFor(day().date); dayLine.textContent = dmyFull(day().date) + ' · ' + (b || 'no beat in the Year Calendar'); };
+    drawLine();
+    main.append(h('section', { class: 'card' }, h('h3', {}, 'Check In'),
+      h('div', { class: 'row-between beatrow' }, dayLine, h('button', { type: 'button', class: 'btn small gray', onclick: () => changeBeat(drawLine) }, 'Change Beat')),
+      h('p', { class: 'hint' }, 'Tap “Working Today” to start your day. The time and your location are recorded, and Log Visits and Log Payments open.'),
+      h('div', { class: 'submitbar' }, btn), msg));
+    async function mark() {
+      if (day().in) return home();
+      btn.disabled = true; say(msg, 'Getting your location…');
+      const loc = await locNow(6000);
+      const d = day(), t = nowTime();
+      d.in = t; d.inLoc = loc; save('day');
+      submitJob({ id: U.uuid(), label: 'Attendance – Check In (' + t + ')', parts: [{ kind: 'attend', date: d.date, time: t, location: loc, beat: beatFor(d.date) }], overlay: null });
+      U.toast('Check In: ' + t); home();
+    }
+    currentView = { onData() { if (day().in) home(); }, tick() { if (day().in || day().date !== U.todayIso()) home(); } };
+  }
+
+  /* "Previous Entries": today's entries on this phone – Entry n: Market - Counter, its kind, 👁 view (read only) and ✏ edit */
+  const ICON_EYE = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>';
+  const ICON_PEN = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>';
+  function iconOnly(svg, label, onclick, cls) { const b = h('button', { type: 'button', class: 'iconsq ' + (cls || ''), 'aria-label': label, title: label, onclick }); b.innerHTML = svg; return b; }
+  const pencilBtn = onclick => iconOnly(ICON_PEN, 'Edit this entry', onclick, 'topedit');
+  const editBar = (onSave, msg) => h('div', { class: 'submitbar' }, h('button', { class: 'btn big', onclick: onSave }, 'SAVE CHANGES'), h('button', { class: 'btn gray', onclick: () => entriesView() }, 'Cancel'), msg);
+  function entriesView() {
+    if (!canWork()) return home();
+    const main = shell('Previous Entries', home);
+    const list = day().entries;
+    const pick = (t, k) => { const m = new RegExp('^' + k + ':\\s*(.+)$', 'm').exec(t || ''); return m ? m[1].trim() : ''; };
+    if (!list.length) main.append(h('section', { class: 'card' }, h('p', { class: 'hint' }, 'No entries yet today. Visits and payments you submit today appear here.')));
+    list.forEach((e, i) => {
+      const open = m => (e.kind === 'Payment' ? payView : visitView)({ entry: e, mode: m });
+      const title = 'Entry ' + (i + 1) + ': ' + (e.market || pick(e.text, 'Market')) + ' - ' + (e.counter || pick(e.text, 'Counter'));
+      const cap = (e.cat || (e.kind === 'Payment' ? 'Payment without Visit' : 'Visit')) + (e.time ? ' · ' + e.time : '') + (e.edited ? ' · edited ' + e.edited : '');
+      const eye = iconOnly(ICON_EYE, 'View', () => open('view')), pen = iconOnly(ICON_PEN, 'Edit', () => open('edit'));
+      if (!e.form) eye.disabled = pen.disabled = true;               // entries brought back from the server after a reinstall
+      main.append(h('div', { class: 'entrybox' }, h('div', { class: 'eb-text' }, h('b', {}, title), h('span', {}, cap)), h('div', { class: 'eb-acts' }, eye, pen)));
+    });
+    currentView = { onData() { if (!canWork()) home(); }, tick() { if (!canWork()) home(); } };
+  }
+
+  /* "Change Beat": pick a beat and see its markets; the chosen beat is used for the whole of TODAY only */
+  function changeBeat(after) {
+    const d = day(), cur = beatFor(d.date), cal = calBeat(d.date);
+    const list = BEATS.slice(); if (cur && !list.includes(cur)) list.unshift(cur);
+    const sel = h('select', { class: 'inp' }, h('option', { value: '' }, '---- Select ----'), ...list.map(b => h('option', { value: b }, b + (b === cal ? '  (Year Calendar)' : ''))));
+    sel.value = cur;
+    const mk = h('div', { class: 'beatmarkets' });
+    const drawMk = () => {
+      const ms = sel.value ? model.marketsFor(sel.value) : [];
+      mk.replaceChildren(h('div', { class: 'lbl' }, sel.value ? 'Markets of ' + sel.value + (ms.length ? ' (' + ms.length + ')' : '') : 'Markets'),
+        ms.length ? h('ol', { class: 'mklist' }, ...ms.map(m => h('li', {}, m))) : h('p', { class: 'hint' }, sel.value ? 'No markets are listed for this beat in your markets sheet.' : 'Select a beat to see its markets.'));
+    };
+    sel.addEventListener('change', drawMk); drawMk();
+    const close = () => ov.remove();
+    const save = () => {
+      if (!sel.value) { U.toast('Select a beat.'); return; }
+      const dd = day(); dd.beat = sel.value; store.set('day', dd); close(); after && after();
+      U.toast('Today’s beat: ' + sel.value);
+    };
+    const ov = h('div', { class: 'modal', onclick: e => { if (e.target === ov) close(); } },
+      h('div', { class: 'modal-box', role: 'dialog', 'aria-label': 'Change Beat' },
+        h('div', { class: 'row-between modal-head' }, h('h2', {}, 'Change Beat'), h('button', { class: 'x', onclick: close, 'aria-label': 'Close' }, '✕')),
+        h('div', { class: 'modal-body' }, field('Beat', sel), mk,
+          h('p', { class: 'hint' }, 'The beat you choose is used for the whole of today only. Tomorrow goes back to the Year Calendar.'),
+          h('div', { class: 'submitbar' }, h('button', { type: 'button', class: 'btn big', onclick: save }, 'Set as today’s beat'), h('button', { type: 'button', class: 'btn gray', onclick: close }, 'Cancel')))));
+    document.body.append(ov);
+  }
+
+  function checkoutView() {
+    if (!isFieldRole() || !day().in || day().out) return home();
+    const main = shell('Check Out', home);
+    Loc.refresh();
+    const msg = msgBox(), d = day(), n = dayEntries(d).length;
+    const endBtn = h('button', { class: 'btn big red', onclick: () => { endBtn.hidden = true; ask.hidden = false; } }, 'End Day');
+    const ask = h('div', { class: 'confirm', hidden: true },
+      h('p', {}, h('b', {}, 'Are you sure?'), ' After ending the day you cannot log any more visits or payments today.'),
+      h('div', { class: 'submitbar' }, h('button', { class: 'btn big red', onclick: end }, 'Yes, End Day'), h('button', { class: 'btn gray', onclick: () => { ask.hidden = true; endBtn.hidden = false; } }, 'Cancel')));
+    main.append(h('section', { class: 'card' }, h('h3', {}, 'Check Out'),
+      h('div', { class: 'daystats' }, h('div', {}, h('small', {}, 'Check In'), h('b', {}, d.in)), h('div', {}, h('small', {}, 'Entries today'), h('b', {}, String(n)))),
+      h('p', { class: 'hint' }, 'Tap “End Day” when your work is over. A PDF of all today’s entries is made, ready to share.'),
+      h('div', { class: 'submitbar' }, endBtn), ask, msg));
+    async function end() {
+      const d = day(); if (d.out) return daySummaryView();
+      ask.querySelectorAll('button').forEach(b => { b.disabled = true; }); say(msg, 'Ending the day…');
+      const loc = await locNow(6000), t = nowTime();
+      d.out = t; d.outLoc = loc; save('day');
+      const list = dayEntries(d);
+      submitJob({ id: U.uuid(), label: 'Check Out (' + t + ')', parts: [{ kind: 'checkout', date: d.date, time: t, location: loc, entries: list.length, summary: dayText(d),
+        times: list.map(e => [e.kind, e.time].filter(Boolean).join(' · ')), locs: list.map(e => e.loc || '') }], overlay: null });
+      daySummaryView();
+    }
+    currentView = { onData() { if (day().out) home(); }, tick() { if (day().date !== U.todayIso()) home(); } };
+  }
+
+  /* the day's points for the map: Check In, Entry 1 … n, Check Out (only those with a usable "lat, lon") */
+  function parseLatLon(l) { const m = /(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)/.exec(String(l || '')); if (!m) return null; const la = +m[1], lo = +m[2]; return Math.abs(la) <= 90 && Math.abs(lo) <= 180 && (la || lo) ? { lat: la, lon: lo, approx: /approx/i.test(l) } : null; }
+  function dayPoints(dy) {
+    const pts = [];
+    const add = (label, l, kind) => { const p = parseLatLon(l); if (p) pts.push(Object.assign({ label, kind }, p)); };
+    add('Check In', dy.inLoc, 'in');
+    dy.list.forEach((e, i) => add('Entry ' + (i + 1), e.loc, 'entry'));
+    add('Check Out', dy.outLoc, 'out');
+    return pts;
+  }
+  /* lays the points out in a w x h box (equal scale on both axes, like a map) -> {pins:[{x,y,…}], ticksX, ticksY} – used for the PDF and the screen */
+  function mapLayout(pts, w, h, pad) {
+    if (!pts.length) return null;
+    const lat0 = pts.reduce((a, p) => a + p.lat, 0) / pts.length, k = Math.cos(lat0 * Math.PI / 180);
+    let x0 = Math.min(...pts.map(p => p.lon * k)), x1 = Math.max(...pts.map(p => p.lon * k)), y0 = Math.min(...pts.map(p => p.lat)), y1 = Math.max(...pts.map(p => p.lat));
+    const min = 0.002;                                            // at least ~200 m across, so one spot does not fill the page
+    if (x1 - x0 < min) { const c = (x0 + x1) / 2; x0 = c - min / 2; x1 = c + min / 2; }
+    if (y1 - y0 < min) { const c = (y0 + y1) / 2; y0 = c - min / 2; y1 = c + min / 2; }
+    const iw = w - pad.l - pad.r, ih = h - pad.t - pad.b, inset = 26, sc = Math.min((iw - 2 * inset) / (x1 - x0), (ih - 2 * inset) / (y1 - y0));   // pins stay off the frame
+    const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+    const X = lonk => pad.l + iw / 2 + (lonk - cx) * sc, Y = lat => pad.t + ih / 2 - (lat - cy) * sc;   // y grows downwards (screen)
+    const pins = pts.map(p => Object.assign({}, p, { x: X(p.lon * k), y: Y(p.lat) }));
+    // labels: to the right of the pin (left near the right edge), pushed down when they would overlap an earlier label
+    const placed = [];
+    pins.forEach(p => {
+      const lw = 112, lh = 24; let lx = p.x + 9 + lw > pad.l + iw - 2 ? p.x - 9 - lw : p.x + 9, ly = p.y - lh / 2;
+      for (let t = 0; t < 40 && placed.some(q => lx < q.x + q.w && lx + lw > q.x && ly < q.y + q.h && ly + lh > q.y); t++) ly += lh + 2;
+      ly = Math.max(pad.t + 2, Math.min(pad.t + ih - lh - 2, ly));
+      lx = Math.max(pad.l + 2, lx);
+      placed.push({ x: lx, y: ly, w: lw, h: lh }); p.lx = lx; p.ly = ly; p.lw = lw; p.lh = lh;
+    });
+    const ticks = (a, b, n) => Array.from({ length: n + 1 }, (_, i) => a + (b - a) * i / n);
+    const lonL = (pad.l - pad.l - iw / 2) / sc + cx, lonR = (iw / 2) / sc + cx, latT = cy + (ih / 2) / sc, latB = cy - (ih / 2) / sc;
+    return { pins, pad, iw, ih, ticksX: ticks(lonL, lonR, 4).map(v => ({ x: X(v), v: v / k })), ticksY: ticks(latB, latT, 4).map(v => ({ y: Y(v), v })) };
+  }
+  const PIN = { in: '#0F7A55', entry: '#16306F', out: '#B42318' };
+  const fmtLL = p => p.lat.toFixed(5) + ', ' + p.lon.toFixed(5) + (p.approx ? ' (approx)' : '');
+  function mapSvg(dy) {                                          // the same picture on the screen
+    const pts = dayPoints(dy), W = 400, H = 380, L = mapLayout(pts, W, H, { l: 70, r: 22, t: 10, b: 34 });
+    const box = h('div', { class: 'daymap' });
+    if (!L) { box.append(h('p', { class: 'hint' }, 'No locations were recorded today, so there is no map.')); return box; }
+    const e = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+    let svg = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Map of today's points"><rect x="${L.pad.l}" y="${L.pad.t}" width="${L.iw}" height="${L.ih}" fill="#F4F7FC" stroke="#CBD5E1"/>`;
+    L.ticksX.forEach(t => { svg += `<line x1="${t.x}" y1="${L.pad.t}" x2="${t.x}" y2="${L.pad.t + L.ih}" stroke="#E2E8F0"/><text x="${t.x}" y="${H - 14}" font-size="11" text-anchor="middle" fill="#64748B">${t.v.toFixed(4)}</text>`; });
+    L.ticksY.forEach(t => { svg += `<line x1="${L.pad.l}" y1="${t.y}" x2="${L.pad.l + L.iw}" y2="${t.y}" stroke="#E2E8F0"/><text x="${L.pad.l - 6}" y="${t.y + 4}" font-size="11" text-anchor="end" fill="#64748B">${t.v.toFixed(4)}</text>`; });
+    svg += `<text x="${L.pad.l + L.iw / 2}" y="${H - 2}" font-size="11" text-anchor="middle" fill="#64748B">Longitude</text><text x="9" y="${L.pad.t + L.ih / 2}" font-size="11" text-anchor="middle" fill="#64748B" transform="rotate(-90 9 ${L.pad.t + L.ih / 2})">Latitude</text>`;
+    if (L.pins.length > 1) svg += `<polyline points="${L.pins.map(p => p.x + ',' + p.y).join(' ')}" fill="none" stroke="#94A3B8" stroke-width="1.5" stroke-dasharray="5 4"/>`;
+    L.pins.forEach(p => { svg += `<line x1="${p.x}" y1="${p.y}" x2="${p.lx < p.x ? p.lx + p.lw : p.lx}" y2="${p.ly + p.lh / 2}" stroke="#CBD5E1"/>`; });
+    L.pins.forEach(p => { svg += `<circle cx="${p.x}" cy="${p.y}" r="6" fill="${PIN[p.kind]}" stroke="#fff" stroke-width="2"/>`; });
+    L.pins.forEach(p => { svg += `<rect x="${p.lx}" y="${p.ly}" width="${p.lw}" height="${p.lh}" rx="4" fill="#fff" fill-opacity=".92" stroke="${PIN[p.kind]}" stroke-width=".8"/><text x="${p.lx + 5}" y="${p.ly + 10}" font-size="10" font-weight="700" fill="${PIN[p.kind]}">${e(p.label)}</text><text x="${p.lx + 5}" y="${p.ly + 20}" font-size="9" fill="#334155">${e(fmtLL(p))}</text>`; });
+    box.innerHTML = svg + '</svg>';
+    return box;
+  }
+
+  function daySummaryView() {
+    if (!isFieldRole() || !day().out) return home();
+    const main = shell('Today’s Summary', home);
+    const d = day(), list = dayEntries(d), title = S.profile.name + '’s work on ' + dmyFull(d.date);
+    const dy = { date: d.date, in: d.in, out: d.out, inLoc: d.inLoc || '', outLoc: d.outLoc || '', list, role: S.profile.title || S.profile.position };
+    const fname = S.profile.name + "'s work on " + dmyFull(d.date).replace(/\//g, '-') + '.pdf';
+    const shareBtn = iconBtn('green', ICON_SHARE, 'Share PDF', share), dlBtn = h('button', { type: 'button', class: 'btn gray', onclick: download }, 'Download PDF');
+    const status = h('p', { class: 'hint' }, 'Making the PDF…');
+    shareBtn.disabled = dlBtn.disabled = true;
+    main.append(h('section', { class: 'card' }, h('h3', {}, title),
+        h('div', { class: 'daystats' }, h('div', {}, h('small', {}, 'Check In'), h('b', {}, d.in || '–')), h('div', {}, h('small', {}, 'Check Out'), h('b', {}, d.out)), h('div', {}, h('small', {}, 'Entries'), h('b', {}, String(list.length)))),
+        h('p', { class: 'locline' }, 'Check In – Location: ' + locText(dy.inLoc)), h('p', { class: 'locline' }, 'Check Out – Location: ' + locText(dy.outLoc)),
+        h('div', { class: 'summary-actions' }, shareBtn, dlBtn), status),
+      reportCard(d),
+      h('section', { class: 'card' }, h('h3', {}, 'Today on the map'), mapSvg(dy)),
+      ...(list.length ? list.map((e, i) => h('section', { class: 'card entry' }, h('div', { class: 'row-between' }, h('h3', {}, 'Entry ' + (i + 1) + ':'), h('small', { class: 'hint' }, [e.kind, e.time].filter(Boolean).join(' · '))),
+                        h('p', { class: 'locline' }, 'Location: ' + locText(e.loc)), h('div', { class: 'entrytext' }, e.text.replace(/[_*]/g, ''))))
+                  : [h('section', { class: 'card' }, h('p', { class: 'hint' }, 'No visits or payments were logged today.'))]));
+    let blob = null;
+    makeWorkPdf(S.profile.name, title, null, [dy], true).then(b => { blob = b; shareBtn.disabled = dlBtn.disabled = false; status.textContent = 'PDF ready: ' + fname; })
+      .catch(e => { status.textContent = e.message; status.className = 'hint bad'; });
+    function share() { if (blob) sharePdf(blob, fname, title); }
+    function download() { if (blob) downloadBlob(blob, fname); }
+    currentView = { tick() { if (day().date !== U.todayIso()) home(); } };
+  }
+
+  function reportCard(d) {
+    const box = h('textarea', { class: 'inp summary', readonly: true, rows: 16 }), note = h('p', { class: 'hint' }, 'Preparing the report…');
+    let text = '';
+    const copyBtn = iconBtn('', ICON_COPY, 'Copy', async () => { try { await navigator.clipboard.writeText(text); } catch (e) { box.select(); try { document.execCommand('copy'); } catch (e2) {} } U.toast('Copied'); });
+    const shareBtn = iconBtn('green', ICON_SHARE, 'Share', async () => { if (navigator.share) { try { await navigator.share({ text }); } catch (e) {} } else { try { await navigator.clipboard.writeText(text); } catch (e) {} U.toast('Sharing is not available here – the text was copied instead.'); } });
+    copyBtn.disabled = shareBtn.disabled = true;
+    const show = (t, how) => { text = t; box.value = t; box.rows = Math.min(22, t.split('\n').length + 1); copyBtn.disabled = shareBtn.disabled = false; note.textContent = how; };
+    if (d.report) show(d.report, '');
+    else (async () => {
+      const t0 = Date.now();
+      while (S.outbox.length && Date.now() - t0 < 10000) { await sync(false); await new Promise(r => setTimeout(r, 600)); }   // today's entries go up first
+      try {
+        if (S.outbox.length) throw new Error('waiting');
+        const r = await authed('day_report', { date: d.date });
+        const t = dayReportText(S.profile.name, d, r); d.report = t; save('day'); show(t, '');
+      } catch (e) { show(dayReportText(S.profile.name, d, localTotals(d)), 'No connection – these figures are from this phone. Open this page again when you are online for the exact report.'); }
+    })();
+    return h('section', { class: 'card' }, h('h3', {}, 'Day End Order Report'), box, h('div', { class: 'summary-actions' }, copyBtn, shareBtn), note);
+  }
+
+  /* "Generate Summary" (Head of Operations): one DSO's saved days between two dates, as one PDF (each date on its own page) */
+  function rangeSummaryView() {
+    if (!S.profile || S.profile.position !== 'Head of Operations') return home();
+    const main = shell('Generate Summary', home);
+    const msg = msgBox(), today = U.todayIso();
+    const who = h('select', { class: 'inp' }, h('option', { value: '' }, 'Loading…'));
+    const from = dateBox(today.slice(0, 8) + '01'), to = dateBox(today);
+    from.max = to.max = today;
+    const genBtn = h('button', { class: 'btn big', onclick: generate }, 'Generate Summary');
+    const result = h('div');
+    main.append(h('section', { class: 'card' }, h('h3', {}, 'Generate Summary'),
+      field('DSO', who), h('div', { class: 'grid2' }, field('Start date', from), field('End date', to)),
+      h('p', { class: 'hint' }, 'Every day the DSO ended with Check Out is included, each on its own page, exactly like the day’s PDF.'),
+      h('div', { class: 'submitbar' }, genBtn), msg), result);
+    authed('day_summaries', {}).then(r => {
+      const team = r.team || [];
+      who.replaceChildren(h('option', { value: '' }, '---- Select ----'), ...team.map(n => h('option', { value: n }, n)));
+      if (!team.length) say(msg, 'No DSO or Manager is registered under you yet.', true);
+    }).catch(e => { who.replaceChildren(h('option', { value: '' }, '---- Select ----')); say(msg, e.offline ? 'No internet – the DSO list needs a connection.' : e.message, true); });
+    let busy = false;
+    async function generate() {
+      if (busy) return;
+      const name = who.value, a = from.get(), b = to.get();
+      result.replaceChildren();
+      if (!name) return say(msg, 'Select the DSO.', true);
+      if (!U.parseIso(a) || !U.parseIso(b)) return say(msg, 'Choose the Start date and the End date.', true);
+      if (a > b) return say(msg, 'The Start date is after the End date.', true);
+      if (b > today) return say(msg, 'The End date cannot be in the future.', true);
+      busy = true; genBtn.disabled = true; say(msg, 'Getting ' + name + '’s saved days…');
+      try {
+        let r;
+        try { r = await authed('day_summaries', { dso: name, from: a, to: b }); }
+        catch (e) { throw new Error(e.offline ? 'No internet – the summary needs a connection to read the saved days.' : e.message); }
+        const nm = r.name || name;
+        const list = (r.days || []).map(x => ({ date: x.date, role: x.position, in: x.in, out: x.out, inLoc: x.inLoc, outLoc: x.outLoc, list: parseDayText(x.summary, x.times, x.locs), noEnd: !x.out }));
+        if (!list.length) { say(msg, nm + ' marked no attendance between ' + dmyFull(a) + ' and ' + dmyFull(b) + '.', true); return; }
+        say(msg, 'Making the PDF…');
+        const title = nm + '’s work from ' + dmyFull(a) + ' to ' + dmyFull(b);
+        const fname = nm + "'s work from " + dmyFull(a).replace(/\//g, '-') + ' to ' + dmyFull(b).replace(/\//g, '-') + '.pdf';
+        const blob = await makeWorkPdf(nm, title, { from: a, to: b }, list, false);
+        const total = list.reduce((n, x) => n + x.list.length, 0);
+        say(msg, '');
+        result.append(h('section', { class: 'card' }, h('h3', {}, title),
+          h('div', { class: 'daystats' }, h('div', {}, h('small', {}, 'Days'), h('b', {}, String(list.length))), h('div', {}, h('small', {}, 'Entries'), h('b', {}, String(total)))),
+          h('div', { class: 'summary-actions' }, iconBtn('green', ICON_SHARE, 'Share PDF', () => sharePdf(blob, fname, title)), h('button', { type: 'button', class: 'btn gray', onclick: () => downloadBlob(blob, fname) }, 'Download PDF')),
+          h('p', { class: 'hint' }, 'PDF ready: ' + fname),
+          h('ul', { class: 'daylist' }, ...list.map(x => h('li', {}, h('b', {}, dmyFull(x.date)), ' – ' + x.list.length + (x.list.length === 1 ? ' entry' : ' entries') + (x.noEnd ? ' (day not ended)' : ''))))));
+        result.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } catch (e) { say(msg, e.message, true); }
+      finally { busy = false; genBtn.disabled = false; }
+    }
+  }
+  async function sharePdf(blob, fname, title) {
+    const file = new File([blob], fname, { type: 'application/pdf' });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) { try { await navigator.share({ files: [file], title }); } catch (e) {} }
+    else { downloadBlob(blob, fname); U.toast('Sharing is not available here – the PDF was downloaded instead.'); }
+  }
+  function downloadBlob(blob, fname) {
+    const url = URL.createObjectURL(blob), a = h('a', { href: url, download: fname });
+    document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 60000);
+  }
+
+  /* PDF: made on the phone with pdf-lib (js/pdf-lib.min.js, loaded only when needed). The built-in PDF fonts have no ₹ sign, so amounts read "Rs." */
+  let pdfLibP = null;
+  function loadPdfLib() {
+    if (window.PDFLib) return Promise.resolve(window.PDFLib);
+    if (!pdfLibP) pdfLibP = new Promise((res, rej) => {
+      const sc = h('script', { src: 'js/pdf-lib.min.js', 'data-quiet': '1' });
+      sc.onload = () => (window.PDFLib ? res(window.PDFLib) : rej(new Error('The PDF maker did not load.')));
+      sc.onerror = () => { pdfLibP = null; sc.remove(); rej(new Error('Could not load the PDF maker. Connect to the internet once and open this page again.')); };
+      document.head.append(sc);
+    });
+    return pdfLibP;
+  }
+  const WINANSI = '€‚ƒ„…†‡ˆ‰Š‹ŒŽ‘’“”•–—˜™š›œžŸ';
+  const pdfSafe = t => String(t).replace(/₹\s?/g, 'Rs. ').replace(/[^\x20-\x7E\xA0-\xFF]/g, c => (WINANSI.indexOf(c) >= 0 ? c : c === '\t' ? ' ' : '?'));
+  /* name: whose work. days: [{date, role, in, out, inLoc, outLoc, list:[{kind, time, text, loc}], noEnd}].
+     range: null for one day's PDF, {from, to} for "Generate Summary". withMap: the day-end PDF gets the map of the day's points.
+     Every day is laid out the same way: "<Name>'s work on <date>", Check In / Check Out (+ Location), Entries, the map (day-end only), then Entry 1:, Entry 2: … */
+  async function makeWorkPdf(name, title, range, days, withMap) {
+    const { PDFDocument, StandardFonts, rgb } = await loadPdfLib();
+    const doc = await PDFDocument.create();
+    doc.setTitle(pdfSafe(title)); doc.setAuthor(pdfSafe(name)); doc.setCreator('ProMandi'); doc.setProducer('ProMandi');
+    const reg = await doc.embedFont(StandardFonts.Helvetica), bold = await doc.embedFont(StandardFonts.HelveticaBold), boldIt = await doc.embedFont(StandardFonts.HelveticaBoldOblique);
+    const green = rgb(0.0, 0.42, 0.18);                            // deep green: the "Daily Cumulative" amount
+    const W = 595.28, H = 841.89, M = 50, FS = 11, LH = 15.5, navy = rgb(0.086, 0.188, 0.435), ink = rgb(0.1, 0.12, 0.18), muted = rgb(0.38, 0.42, 0.5), line = rgb(0.85, 0.88, 0.93), gold = rgb(0.66, 0.46, 0.03);
+    const hex = c => rgb(parseInt(c.slice(1, 3), 16) / 255, parseInt(c.slice(3, 5), 16) / 255, parseInt(c.slice(5, 7), 16) / 255);
+    let page, y;
+    const newPage = () => { page = doc.addPage([W, H]); y = H - M; };
+    const need = hgt => { if (y - hgt < M + 20) newPage(); };
+    function runs(raw) {                                           // WhatsApp *bold* / _*bold*_ -> [{t, b}]
+      const dc = /^_\*(Daily Cumulative:)\*_\s*(.*)$/.exec(raw);    // "Daily Cumulative:" bold + its amount deep green, bold, italic
+      if (dc) return [{ t: pdfSafe(dc[1]), b: true }, { t: ' ', b: false }, { t: pdfSafe(dc[2]), b: true, g: true }];
+      const l = raw.replace(/^_(\*[^*]+\*)_$/, '$1');
+      const out = []; let b = false;
+      l.split('*').forEach((part, i) => { if (i) b = !b; if (part) out.push({ t: pdfSafe(part.replace(/^_|_$/g, '')), b }); });
+      return out.length ? out : [{ t: '', b: false }];
+    }
+    function drawRich(raw, x, size, color) {                       // word-wrapped, keeps bold parts
+      const words = []; runs(raw).forEach(r => r.t.split(/(\s+)/).forEach(w => { if (w) words.push({ t: w, b: r.b, g: r.g }); }));
+      const maxW = W - M - x; let lineW = 0, cur = [];
+      const fontOf = w => (w.g ? boldIt : w.b ? bold : reg);
+      const flush = () => { need(LH); let cx = x; cur.forEach(w => { const f = fontOf(w); page.drawText(w.t, { x: cx, y: y - size, size, font: f, color: w.g ? green : w.b ? navy : color }); cx += f.widthOfTextAtSize(w.t, size); }); y -= LH; cur = []; lineW = 0; };
+      words.forEach(w => {
+        const f = fontOf(w), ww = f.widthOfTextAtSize(w.t, size);
+        if (lineW + ww > maxW && cur.length && w.t.trim()) flush();
+        if (!cur.length && !w.t.trim()) return;
+        cur.push(w); lineW += ww;
+      });
+      if (cur.length) flush();
+    }
+    const txt = (t, x, size, font, color) => page.drawText(pdfSafe(t), { x, y: y - size, size, font, color });
+    function drawMap(dy) {                                         // the day's points as a graph: pins + "Check In", "Entry 1" … + lat, lon
+      const pts = dayPoints(dy), MW = W - 2 * M, MH = 290;
+      need(MH + 30);
+      txt('Today on the map', M, 12, bold, navy); y -= 18;
+      const top = y, L = mapLayout(pts, MW, MH, { l: 58, r: 10, t: 10, b: 30 });
+      const P = (x, yy) => ({ x: M + x, y: top - yy });            // layout (y down) -> PDF (y up)
+      page.drawRectangle({ x: M, y: top - MH, width: MW, height: MH, borderColor: line, borderWidth: 0.8 });
+      if (!L) { txt('No locations were recorded on this day.', M + 12, 10, reg, muted); y = top - MH - 14; return; }
+      const a = P(L.pad.l, L.pad.t);
+      page.drawRectangle({ x: a.x, y: a.y - L.ih, width: L.iw, height: L.ih, color: rgb(0.957, 0.969, 0.988), borderColor: rgb(0.8, 0.84, 0.88), borderWidth: 0.6 });
+      L.ticksX.forEach(t => { const p = P(t.x, 0); page.drawLine({ start: { x: p.x, y: a.y }, end: { x: p.x, y: a.y - L.ih }, thickness: 0.4, color: line }); const s = t.v.toFixed(4); page.drawText(s, { x: p.x - reg.widthOfTextAtSize(s, 7) / 2, y: a.y - L.ih - 10, size: 7, font: reg, color: muted }); });
+      L.ticksY.forEach(t => { const p = P(0, t.y); page.drawLine({ start: { x: a.x, y: p.y }, end: { x: a.x + L.iw, y: p.y }, thickness: 0.4, color: line }); const s = t.v.toFixed(4); page.drawText(s, { x: a.x - 4 - reg.widthOfTextAtSize(s, 7), y: p.y - 2.5, size: 7, font: reg, color: muted }); });
+      page.drawText('Longitude', { x: a.x + L.iw / 2 - 18, y: top - MH + 4, size: 7.5, font: reg, color: muted });
+      page.drawText('Latitude', { x: M + 9, y: a.y - L.ih / 2 - 14, size: 7.5, font: reg, color: muted, rotate: { type: 'degrees', angle: 90 } });
+      for (let i = 1; i < L.pins.length; i++) { const p0 = P(L.pins[i - 1].x, L.pins[i - 1].y), p1 = P(L.pins[i].x, L.pins[i].y); page.drawLine({ start: p0, end: p1, thickness: 1, color: rgb(0.58, 0.64, 0.72), dashArray: [4, 3] }); }
+      L.pins.forEach(p => { const c = P(p.x, p.y), q = P(p.lx < p.x ? p.lx + p.lw : p.lx, p.ly + p.lh / 2); page.drawLine({ start: c, end: q, thickness: 0.5, color: rgb(0.8, 0.84, 0.88) }); });
+      L.pins.forEach(p => { const c = P(p.x, p.y); page.drawCircle({ x: c.x, y: c.y, size: 4.5, color: hex(PIN[p.kind]), borderColor: rgb(1, 1, 1), borderWidth: 1.5 }); });
+      L.pins.forEach(p => {
+        const b = P(p.lx, p.ly);
+        page.drawRectangle({ x: b.x, y: b.y - p.lh, width: p.lw, height: p.lh, color: rgb(1, 1, 1), opacity: 0.92, borderColor: hex(PIN[p.kind]), borderWidth: 0.6 });
+        page.drawText(pdfSafe(p.label), { x: b.x + 4, y: b.y - 9.5, size: 8, font: bold, color: hex(PIN[p.kind]) });
+        page.drawText(pdfSafe(fmtLL(p)), { x: b.x + 4, y: b.y - 19.5, size: 7, font: reg, color: ink });
+      });
+      y = top - MH - 16;
+    }
+    const heading = (text, size) => { txt(text, M, size, bold, navy); y -= size + 10; };
+    function drawDay(dy, size, map) {
+      heading(name + '’s work on ' + dmyFull(dy.date), size);
+      txt([dy.role || S.profile.title || S.profile.position, 'Entries: ' + dy.list.length].join('   |   '), M, 10, reg, muted); y -= 15;
+      txt('Check In: ' + (dy.in || '-'), M, 10, bold, ink); txt('Location: ' + locText(dy.inLoc), M + 150, 10, reg, ink); y -= 14;
+      txt('Check Out: ' + (dy.out || '-'), M, 10, bold, ink); txt('Location: ' + locText(dy.outLoc), M + 150, 10, reg, ink); y -= 12;
+      page.drawLine({ start: { x: M, y }, end: { x: W - M, y }, thickness: 1.2, color: navy }); y -= 16;
+      if (dy.noEnd) { txt('This day was not ended with Check Out.', M, 10, bold, gold); y -= 20; }
+      if (map) drawMap(dy);
+      if (!dy.list.length) { txt('No visits or payments were logged on this day.', M, FS, reg, ink); y -= LH; }
+      dy.list.forEach((e, i) => {
+        need(LH * 5);
+        txt('Entry ' + (i + 1) + ':', M, 13, bold, navy);
+        const tag = pdfSafe([e.kind, e.time].filter(Boolean).join('  -  '));
+        if (tag) page.drawText(tag, { x: W - M - reg.widthOfTextAtSize(tag, 9.5), y: y - 12, size: 9.5, font: reg, color: muted });
+        y -= 21;
+        drawRich('*Location:* ' + locText(e.loc), M + 12, FS, ink);
+        e.text.split('\n').forEach(l => { if (!l.trim()) { y -= LH * 0.5; return; } drawRich(l, M + 12, FS, ink); });
+        y -= 6;
+        if (i < dy.list.length - 1) { need(14); page.drawLine({ start: { x: M, y }, end: { x: W - M, y }, thickness: 0.6, color: line }); y -= 14; }
+      });
+    }
+    newPage();
+    if (!range) drawDay(days[0], 20, !!withMap);
+    else {
+      const total = days.reduce((n, x) => n + x.list.length, 0);
+      heading(title, 20);
+      txt([days[0].role || '', 'Days: ' + days.length, 'Entries: ' + total].filter(Boolean).join('   |   '), M, 10, reg, muted); y -= 14;
+      page.drawLine({ start: { x: M, y }, end: { x: W - M, y }, thickness: 1.2, color: navy }); y -= 16;
+      days.forEach(dy => {                                       // contents: one line per day
+        need(LH);
+        txt(dmyFull(dy.date) + '   -   Check In: ' + (dy.in || '-') + '   Check Out: ' + (dy.out || '-') + '   Entries: ' + dy.list.length + (dy.noEnd ? '   (not ended)' : ''), M, FS, reg, ink); y -= LH;
+      });
+      days.forEach(dy => { newPage(); drawDay(dy, 18, false); });   // every date on its own page(s)
+    }
+    const pages = doc.getPages(), foot = pdfSafe('ProMandi  -  ' + title);
+    pages.forEach((p, i) => {
+      const pn = 'Page ' + (i + 1) + ' of ' + pages.length;
+      p.drawText(foot, { x: M, y: 28, size: 8.5, font: reg, color: muted });
+      p.drawText(pn, { x: W - M - reg.widthOfTextAtSize(pn, 8.5), y: 28, size: 8.5, font: reg, color: muted });
+    });
+    return new Blob([await doc.save()], { type: 'application/pdf' });
+  }
+
+  /* ------------------------------------------------------------------ "Logged by" (Head of Operations only): whose name the entry is stored under */
+  function loggedByBox(onChange) {
+    let last = ''; try { last = localStorage.getItem('pa_loggedby') || ''; } catch (e) {}
+    const inp = h('input', { class: 'inp', type: 'text', value: last, placeholder: 'Name of the person', autocapitalize: 'words', autocomplete: 'off', maxlength: 40 });
+    const get = () => inp.value.replace(/\s+/g, ' ').trim();
+    inp.addEventListener('change', () => { try { localStorage.setItem('pa_loggedby', get()); } catch (e) {} onChange && onChange(); });
+    return { field: field('Logged by', inp, 'bigl'), get };
+  }
+
+  /* ------------------------------------------------------------------ DSO: visit */
+  function visitView(opts) {
+    const ent = (opts && opts.entry) || null, mode = ent ? (opts.mode || 'view') : 'new';   // 'new' | 'view' (read only) | 'edit'
+    if (!canWork() || (ent && !ent.form)) return home();
+    const main = shell(mode === 'new' ? 'Log Visits' : (mode === 'view' ? 'Entry ' : 'Edit Entry ') + entryNo(ent), ent ? entriesView : home,
+      mode === 'view' ? pencilBtn(() => visitView({ entry: ent, mode: 'edit' })) : null);
+    Loc.refresh();
+    const msg = msgBox(), isHead = S.profile.position === 'Head of Operations';
+    const by = isHead ? loggedByBox(() => { market.set(''); counter.set(''); counterChanged(); }) : null;
+    if (isHead) sync(true);                                       // fresh "today's orders" of everyone: right Order No. and Daily Cumulative for the "Logged by" person
+    const dsoName = () => (isHead ? by.get() : (S.profile.dso || S.profile.name));
     let outBeat = false, calBeat = '';
     const date = { get: () => U.todayIso() };                       // no Date box for a DSO: the date is always today's
     const beatEl = h('input', { class: 'inp', readonly: true, placeholder: 'Beat' });
     const outTick = h('input', { type: 'checkbox' });
-    const market = new Combo({ placeholder: 'Market', values: () => (outBeat ? model.sheetMarkets() : model.marketsFor(beatEl.value || calBeat)), onInput: () => counterChanged(), onChange: () => { counter.set(''); counterChanged(); } });
+    const market = new Combo({ placeholder: 'Market', values: () => (outBeat ? model.sheetMarkets() : isHead ? model.marketsOf(by.get(), beatEl.value || calBeat) : model.marketsFor(beatEl.value || calBeat)), onInput: () => counterChanged(), onChange: () => { counter.set(''); counterChanged(); } });
     const counter = new Combo({ placeholder: 'Counter', values: () => model.countersFor(market.get()), onInput: () => counterChanged(), onChange: () => counterChanged() });
     const cd = new CounterDetails(model, true);
     const remarks = new Combo({ placeholder: 'Remarks (type or pick)', values: () => REMARKS, onInput: () => prio() });
@@ -643,7 +1164,7 @@
     const counterChanged = () => { cd.update(market.get(), counter.get()); area.refreshRates(); if (counter.get()) Loc.get(); };
     function termsUpdate() { if (!termsField) return; termsField.hidden = !area.rows.length || area.cancelled; if (termsField.hidden) terms.value = ''; }
     function syncBeat() {
-      const d = date.get(), b = U.parseIso(d) ? model.beatForDate(d) : '';
+      const d = date.get(), b = U.parseIso(d) ? beatFor(d) : '';
       if (b !== calBeat) { calBeat = b; outBeat = false; outTick.checked = false; beatEl.value = b; market.set(''); counter.set(''); counterChanged(); }
       prio();
     }
@@ -652,30 +1173,47 @@
       prioEl.textContent = days && U.parseIso(d) ? '→ Priority Visit Date: ' + U.dmy(U.addDays(d, days)) : '';
     }
     outTick.addEventListener('change', () => { outBeat = outTick.checked; beatEl.value = outBeat ? '' : calBeat; market.set(''); counter.set(''); counterChanged(); });
-    main.append(
-      h('section', { class: 'card' }, h('h3', {}, 'Visit'),
+    const sections = [
+      h('section', { class: 'card' }, h('h3', {}, 'Visit'), by ? by.field : null,
         field("Beat (today's)", h('div', { class: 'beatbox' }, beatEl, h('label', { class: 'tick' }, outTick, ' Out of Beat'))),
         field('Market', market.el), field('Counter', counter.el), cd.el,
         field('Remarks', remarks.el), prioEl, field('Interest in Cooler', cooler, 'bigl')),
       h('section', { class: 'card' }, h('h3', {}, 'Order – products, quantity and rate'), area.el, termsField),
-      h('section', { class: 'card' }, h('h3', {}, 'Payment received'), pay.el),
-      submitBar('SUBMIT VISIT', submit, () => clearForm(true), msg));
+      h('section', { class: 'card' }, h('h3', {}, 'Payment received'), pay.el)];
+    if (mode === 'view') { const fs = h('fieldset', { class: 'ro' }, ...sections); fs.disabled = true; main.append(fs); }
+    else main.append(...sections, mode === 'edit' ? editBar(submit, msg) : submitBar('SUBMIT VISIT', submit, () => clearForm(true), msg));
     termsUpdate(); syncBeat();
+    if (ent) {                                                     // reopen the entry as it was saved
+      const f = ent.form;
+      if (f.outBeat) { outTick.checked = true; outBeat = true; beatEl.value = ''; }
+      market.set(f.market); counter.set(f.counter); counterChanged(); remarks.set(f.remarks || ''); prio(); cooler.value = f.cooler || '';
+      (f.lines || []).forEach(l => area.addRow(false, { type: l.type, item: l.item, sub: l.sub, colour: l.colour, qty: l.qty, price: l.rate }));
+      termsUpdate(); terms.value = f.terms || '';
+      (f.pays || []).forEach(p => { pay.addRow(false); const r = pay.rows[pay.rows.length - 1]; r.amt.value = String(p.amount); r.fill(); r.mode.value = p.mode; });
+      pay.update();
+    }
     currentView = { onData() { syncBeat(); area.refreshRates(); counterChanged(); }, tick: syncBeat };     // tick: a new day starts -> its beat
 
     function clearForm() {
       market.set(''); counter.set(''); remarks.set(''); cooler.value = ''; cd.reset(); area.clear(); terms.value = ''; pay.reset(); counterChanged(); prio(); termsUpdate();
     }
     function submit() {
+      if (!canWork()) { say(msg, day().out ? 'You have ended your day – no more visits can be logged today.' : 'Check In first.', true); return; }
       [market, counter, remarks, cd.typeCombo].forEach(c => c.commit()); area.commitAll();
       const job = tryRun(build, msg); if (!job) return;
       submitJob(job);
+      if (job.order) noteOrder(job.order.who, job.order.no, job.order.value);
+      if (ent && ent.orderNo && (!job.order || job.order.no !== ent.orderNo)) noteOrder(dsoName(), ent.orderNo, 0);   // the order was removed in the edit
+      if (ent) { updateEntry(ent, job); showSummary(job.summary); entriesView(); return; }
+      addEntry('Visit', job.summary, job.loc, job.entry);
       say(msg, '✔ Saved on this device' + (online ? ' – uploading…' : ' – will upload when you are online') + '  (' + job.label + ')');
       showSummary(job.summary);
       clearForm(); window.scrollTo({ top: 0, behavior: 'smooth' });
     }
     function build() {
       const ds = needIso(date.get());
+      if (isHead && !by.get()) throw new Error('Enter “Logged by” – the name of the person who made this visit.');
+      const dso = dsoName();
       const beat = outBeat ? '' : clean(beatEl.value);
       if (!beat && !outBeat) throw new Error('No beat found for this date (the Year Calendar has not loaded, or the date is outside it).\nCheck the date, or connect to the internet, wait for the sync and try again.');
       const mk = clean(market.get()).toUpperCase(), cname = clean(counter.get());
@@ -690,22 +1228,29 @@
       const existing = model.findCounter(mk, cname);
       const code = existing ? existing.code : U.counterCode(mk, cname), name = existing ? existing.name : cname;
       const { mobile, ctype, gstin, fill, replace } = cd.resolve(existing);
-      const newMarket = beat && !model.marketsFor(beat).some(m => m.toUpperCase() === mk) && (model.dsoMarkets || {})[beat.toLowerCase()] ? { beat, market: mk } : null;
+      const newMarket = !isHead && beat && !model.marketsFor(beat).some(m => m.toUpperCase() === mk) && (model.dsoMarkets || {})[beat.toLowerCase()] ? { beat, market: mk } : null;
       const orders = [];
+      let ono = '', orderTotal = 0, cumulative = 0;
+      const entryId = ent ? ent.id : U.uuid();
       if (lines.length) {
         const total = lines.reduce((a, l) => a + l.qty * l.rate, 0);
+        ono = ent && ent.orderNo ? ent.orderNo : nextOrderNo(dso, ds); orderTotal = roundRupee(total);      // an edited order keeps its Order No.
+        const others = ordersOf(dso, ds); delete others[ono];
+        cumulative = Object.values(others).reduce((a, v) => a + (+v || 0), 0) + orderTotal;
         const nd = TERM_DAYS[tm] ? U.addDays(ds, TERM_DAYS[tm]) : '';
         const wk = nd ? (model.beatForDate(nd) || U.weekday(nd)) : '';
-        lines.forEach(l => orders.push({ dso, 'order no.': '', 'orders taken': lines.length, 'order value': roundRupee(total), 'counter name': name, 'market code': marketCodeOf(mk), 'counter code': code, date: ds, 'payment terms': tm, 'next payment date': nd, weekday: wk, type: l.type, item: l.item, 'sub item': l.sub, colour: l.colour, qty: l.qty, price: plain(l.rate), 'price x qty': plain(U.mul(l.qty, l.rate)) }));
+        lines.forEach(l => orders.push({ dso, 'entry id': entryId, 'order no.': ono, 'orders taken': lines.length, 'order value': roundRupee(total), 'counter name': name, 'market code': marketCodeOf(mk), 'counter code': code, date: ds, 'payment terms': tm, 'next payment date': nd, weekday: wk, type: l.type, item: l.item, 'sub item': l.sub, colour: l.colour, qty: l.qty, price: plain(l.rate), 'price x qty': plain(U.mul(l.qty, l.rate)) }));
       }
-      const visit = { dso, date: ds, beat, market: mk, 'counter name': name, 'counter code': code, mobile, 'counter type': ctype, 'gstin/pan': gstin, orders: lines.length, productive: lines.length ? 'YES' : 'NO', remarks: rem, 'interest in cooler': cooler.value, 'priority visit date': pdays ? U.addDays(ds, pdays) : '', location: Loc.get() };
+      const visit = { dso, 'entry id': entryId, 'logged by': isHead ? dso : '', date: ds, beat, market: mk, 'counter name': name, 'counter code': code, mobile, 'counter type': ctype, 'gstin/pan': gstin, orders: lines.length, productive: lines.length ? 'YES' : 'NO', remarks: rem, 'interest in cooler': cooler.value, 'priority visit date': pdays ? U.addDays(ds, pdays) : '', location: ent ? (ent.loc || '') : Loc.get() };
       const parts = [];
+      if (ent) parts.push({ kind: 'replace_entry', id: entryId, date: ds });       // the server swaps the old rows for these
       if (fill && Object.keys(fill).length) parts.push({ kind: 'fill', code, values: fill, replace });
       parts.push({ sheet: 'Visits', rows: [visit] });
       if (newMarket) parts.push({ kind: 'market', beat: newMarket.beat, market: newMarket.market });
       if (orders.length) parts.push({ sheet: 'Orders', rows: orders });
       if (pays.length) {
-        const row = { date: ds, market: mk, 'counter name': name, 'counter code': code, total: plain(pays.reduce((a, p) => a + p.amount, 0)) };
+        const row = { date: ds, 'entry id': entryId, market: mk, 'counter name': name, 'counter code': code, total: plain(pays.reduce((a, p) => a + p.amount, 0)) };
+        if (isHead) { row['received by'] = dso; row['logged by'] = dso; }
         pays.forEach(p => { row[p.mode.toLowerCase()] = plain(p.amount); });
         parts.push({ sheet: 'Payments Received', rows: [row] });
       }
@@ -713,20 +1258,33 @@
       const sum = ['_*Visit:*_', 'Date: ' + dmyShort(ds), 'Beat: ' + (outBeat ? 'Out of Beat' : beat), 'Market: ' + mk, 'Counter: ' + name,
                    'Mobile No.: ' + (mobile || 'None'), 'GSTIN/PAN: ' + (gstin || 'None'), 'Remarks: ' + (rem || 'None'), 'Interest in Cooler: ' + cooler.value];
       if (lines.length) {
-        sum.push('', '_*Orders:*_');
-        lines.forEach(l => sum.push(prodName(l), l.qty + ' pc. @ ' + money(l.rate)));
-        sum.push('*Total Order Value:* ' + money(roundRupee(lines.reduce((a, l) => a + l.qty * l.rate, 0))), 'Payment Terms: ' + tm);
+        sum.push('', '_*Orders:*_', 'Order No.: ' + ono);
+        lines.forEach(l => {
+          sum.push([l.item, l.sub].map(x => sval(x)).filter(Boolean).join(' '));
+          if (sval(l.colour) && sval(l.colour).toUpperCase() !== 'N/A') sum.push(sval(l.colour));
+          sum.push(l.qty + ' pc. @ ' + money(l.rate));
+        });
+        sum.push('*Order Value:* ' + money(orderTotal), '_*Daily Cumulative:*_ ' + money(cumulative), 'Payment Terms: ' + tm);
       }
       if (pays.length) sum.push('', '_*Payments:*_', ...payText(pays));
-      return { id: U.uuid(), label, summary: sum.join('\n'), parts,
+      const types = {}; lines.forEach(l => { const t = sval(l.type) || 'Other'; types[t] = (types[t] || 0) + l.qty * l.rate; });
+      const cat = lines.length && pays.length ? 'Order and Payment' : lines.length ? 'Order on Visit' : pays.length ? 'Payment on Visit' : 'Visit only';
+      const entry = { id: entryId, cat, market: mk, counter: name, orderNo: ono, types, pays,
+        form: { outBeat, market: mk, counter: name, remarks: rem, cooler: cooler.value, lines: lines.map(l => ({ type: l.type, item: l.item, sub: l.sub, colour: l.colour, qty: l.qty, rate: l.rate })), terms: tm, pays } };
+      return { id: U.uuid(), label, summary: sum.join('\n'), parts, entry, loc: visit.location || '', pays: pays.length ? pays : null, order: ono ? { who: dso, no: ono, value: orderTotal, types } : null,
         overlay: { visit, orders, newCounter: existing ? null : { market: mk, name, code, mobile, type: ctype, gstin }, newMarket: newMarket ? { beat, market: mk } : null, fill: fill && Object.keys(fill).length ? Object.assign({ code, replace }, fill) : null } };
     }
   }
 
   /* ------------------------------------------------------------------ DSO: payment */
-  function payView() {
-    const main = shell('Log Payments', home);
-    const msg = msgBox(), dso = S.profile.dso || S.profile.name;
+  function payView(opts) {
+    const ent = (opts && opts.entry) || null, mode = ent ? (opts.mode || 'view') : 'new';
+    if (!canWork() || (ent && !ent.form)) return home();
+    const main = shell(mode === 'new' ? 'Log Payments' : (mode === 'view' ? 'Entry ' : 'Edit Entry ') + entryNo(ent), ent ? entriesView : home,
+      mode === 'view' ? pencilBtn(() => payView({ entry: ent, mode: 'edit' })) : null);
+    Loc.refresh();
+    const msg = msgBox(), isHead = S.profile.position === 'Head of Operations';
+    const by = isHead ? loggedByBox() : null;
     const date = { get: () => U.todayIso() };                       // no Date box for a DSO: the date is always today's
     const info = h('div', { class: 'hint' });
     const market = new Combo({ placeholder: 'Market', strict: true, values: () => model.allMarkets(), onChange: () => { counter.set(''); upd(); } });
@@ -737,12 +1295,23 @@
       info.textContent = c ? `Code ${c.code}   |   Mobile No.: ${c.mobile || 'not on file'}   |   Counter type: ${c.type || 'not on file'}` : '';
     }
     function clearForm() { market.set(''); counter.set(''); pay.reset(); upd(); }
-    main.append(h('section', { class: 'card' }, h('h3', {}, 'Counter'), field('Market', market.el), field('Counter', counter.el), info),
-      h('section', { class: 'card' }, h('h3', {}, 'Payment received'), pay.el),
-      submitBar('SUBMIT PAYMENT', () => {
+    const sections = [h('section', { class: 'card' }, h('h3', {}, 'Counter'), by ? by.field : null, field('Market', market.el), field('Counter', counter.el), info),
+      h('section', { class: 'card' }, h('h3', {}, 'Payment received'), pay.el)];
+    if (mode === 'view') { const fs = h('fieldset', { class: 'ro' }, ...sections); fs.disabled = true; main.append(fs); }
+    else main.append(...sections);
+    if (ent) {
+      market.set(ent.form.market); counter.set(ent.form.counter); upd();
+      (ent.form.pays || []).forEach(p => { pay.addRow(false); const r = pay.rows[pay.rows.length - 1]; r.amt.value = String(p.amount); r.fill(); r.mode.value = p.mode; });
+      pay.update();
+    }
+    currentView = { onData: upd };
+    if (mode === 'view') return;
+    const submitPay = () => {
+        if (!canWork()) { say(msg, day().out ? 'You have ended your day – no more payments can be logged today.' : 'Check In first.', true); return; }
         [market, counter].forEach(c => c.commit());
         const job = tryRun(() => {
           const ds = needIso(date.get()), mk = clean(market.get()).toUpperCase();
+          if (isHead && !by.get()) throw new Error('Enter “Logged by” – the name of the person who received this payment.');
           if (!mk) throw new Error('Select the Market.');
           if (!clean(counter.get())) throw new Error('Select the Counter.');
           const c = model.findCounter(mk, counter.get());
@@ -750,16 +1319,24 @@
           const pays = pay.payments();
           if (!pays.length) throw new Error('No payment added.\nTap “＋ Payment”, enter the amount and select the payment mode.');
           const total = pays.reduce((a, p) => a + p.amount, 0);
-          const row = { date: ds, market: mk, 'counter name': c.name, 'counter code': c.code, total: plain(total) };
+          const entryId = ent ? ent.id : U.uuid();
+          const row = { date: ds, 'entry id': entryId, market: mk, 'counter name': c.name, 'counter code': c.code, total: plain(total) };
+          if (isHead) { row['received by'] = by.get(); row['logged by'] = by.get(); }
           pays.forEach(p => { row[p.mode.toLowerCase()] = plain(p.amount); });
           const summary = ['_*Details:*_', 'Date: ' + dmyShort(ds), 'Market: ' + mk, 'Counter: ' + c.name, '', '_*Payments:*_', ...payText(pays), '*Total:* ' + money(total)].join('\n');
-          return { id: U.uuid(), label: c.name + '  |  payment ₹' + roundRupee(total).toLocaleString('en-IN'), summary, parts: [{ sheet: 'Payments Received', rows: [row] }], overlay: null };
+          const parts = ent ? [{ kind: 'replace_entry', id: entryId, date: ds }] : [];
+          parts.push({ sheet: 'Payments Received', rows: [row] });
+          const entry = { id: entryId, cat: 'Payment without Visit', market: mk, counter: c.name, pays, types: {}, form: { market: mk, counter: c.name, pays } };
+          return { id: U.uuid(), label: c.name + '  |  payment ₹' + roundRupee(total).toLocaleString('en-IN'), summary, parts, entry, overlay: null, pays };
         }, msg);
         if (!job) return;
-        submitJob(job); say(msg, '✔ Saved on this device' + (online ? ' – uploading…' : ' – will upload when you are online') + '  (' + job.label + ')');
+        submitJob(job);
+        if (ent) { updateEntry(ent, job); showSummary(job.summary); entriesView(); return; }
+        addEntry('Payment', job.summary, Loc.get(), job.entry);
+        say(msg, '✔ Saved on this device' + (online ? ' – uploading…' : ' – will upload when you are online') + '  (' + job.label + ')');
         showSummary(job.summary); clearForm();
-      }, clearForm, msg));
-    currentView = { onData: upd };
+    };
+    main.append(mode === 'edit' ? editBar(submitPay, msg) : submitBar('SUBMIT PAYMENT', submitPay, clearForm, msg));
   }
 
   /* ------------------------------------------------------------------ Accountant */
@@ -1054,7 +1631,7 @@
   })();
   Install.show();
 
-  window.ProMandi = { start, model, S, sync };
+  window.ProMandi = { start, model, S, sync, Loc };
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
   start();
 })();
