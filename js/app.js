@@ -281,7 +281,7 @@
     if (pos !== 'Accountant') main.append(card('BEAT DETAILS', 'View markets of any beat, targets achieved and payments pending', 'gold', () => beatView()));
     else main.append(card('LOG INWARD INVOICES', 'Log the products that came in', 'green', () => inwardView()), card('LOG OUTWARD INVOICES', 'Log the invoices raised to the counters', 'blue', () => outwardView()), card('EDIT PREVIOUS INVOICE', 'Change, add or remove products of an outward invoice, or cancel it', 'slate', () => editView()));
     main.append(card('COUNTER SEARCH', "View any counter's visits, orders, invoices and more", 'teal', () => counterView()));
-    if (isFieldRole() && day().in && !day().out) main.append(roundBtn('CHECK OUT', 'Check In: ' + day().in, 'out', () => checkoutView()));
+    if (isFieldRole() && day().in && !day().out) main.append(roundBtn('CHECK OUT', 'End your day', 'out', () => checkoutView()));
     const fl = failedList(); if (fl) main.append(fl);
     const key = dayKey();
     currentView = { onData() { if (dayKey() !== key) home(); }, tick() { if (dayKey() !== key) home(); } };   // a new day / attendance changed elsewhere
