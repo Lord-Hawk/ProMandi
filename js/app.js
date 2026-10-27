@@ -263,7 +263,6 @@
         card('AS DSO', 'Log visits and payments (“Logged by”), beat details and counter search', 'blue', () => { asRole = 'DSO'; home(); }),
         card('AS MANAGER', 'The Manager’s home page – log visits and payments, beat details and counter search', 'violet', () => { asRole = 'Manager'; home(); }),
         card('AS ACCOUNTANT', 'Inward and outward invoices, edit a previous invoice, counter search', 'green', () => { asRole = 'Accountant'; home(); }),
-        card('PREVIOUS ENTRIES', 'See and change anyone’s entries – DSO, Manager or Accountant, any day', 'slate', () => headEntriesView()),
         card('GENERATE SUMMARY', 'A DSO’s work between two dates, day by day, as a PDF', 'indigo', () => rangeSummaryView()));
       const fl = failedList(); if (fl) main.append(fl);
       currentView = { onData() {} };
@@ -278,10 +277,9 @@
       if (!d.in) main.append(roundBtn('CHECK IN', 'Start your day', 'in', () => attendanceView()));
       else if (!d.out) main.append(...logCards(), card('PREVIOUS ENTRIES', 'Today’s visits and payments – view or edit them', 'slate', () => entriesView()));
       else main.append(card('DAY ENDED', 'You checked out at ' + d.out + '. Tap to see and share today’s summary', 'slate', () => daySummaryView()));
-    } else if (isHead && pos !== 'Accountant') main.append(...logCards(), card('PREVIOUS ENTRIES', 'See and change anyone’s entries – DSO, Manager or Accountant, any day', 'slate', () => headEntriesView()));          // the Head as DSO / Manager: no attendance, "Logged by" instead
+    } else if (isHead && pos !== 'Accountant') main.append(...logCards(), card('PREVIOUS ENTRIES', pos === 'Manager' ? 'See and change any Manager’s entries, any day' : 'See and change any DSO’s entries, any day', 'slate', () => headEntriesView(pos)));          // the Head as DSO / Manager: no attendance, "Logged by" instead
     if (pos !== 'Accountant') main.append(card('BEAT DETAILS', 'View markets of any beat, targets achieved and payments pending', 'gold', () => beatView()));
-    else main.append(card('LOG INWARD INVOICES', 'Log the products that came in', 'green', () => inwardView()), card('LOG OUTWARD INVOICES', 'Log the invoices raised to the counters', 'blue', () => outwardView()), card('EDIT PREVIOUS INVOICE', 'Change, add or remove products of an outward invoice, or cancel it', 'slate', () => editView()),
-      ...(isHead ? [card('PREVIOUS ENTRIES', 'See and change anyone’s entries – DSO, Manager or Accountant, any day', 'violet', () => headEntriesView())] : []));
+    else main.append(card('LOG INWARD INVOICES', 'Log the products that came in', 'green', () => inwardView()), card('LOG OUTWARD INVOICES', 'Log the invoices raised to the counters', 'blue', () => outwardView()), card('EDIT PREVIOUS INVOICE', 'Change, add or remove products of an outward invoice, or cancel it', 'slate', () => editView()));
     main.append(card('COUNTER SEARCH', "View any counter's visits, orders, invoices and more", 'teal', () => counterView()));
     if (isFieldRole() && day().in && !day().out) main.append(roundBtn('CHECK OUT', 'End your day', 'out', () => checkoutView()));
     const fl = failedList(); if (fl) main.append(fl);
@@ -796,7 +794,8 @@
   const ICON_PEN = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>';
   function iconOnly(svg, label, onclick, cls) { const b = h('button', { type: 'button', class: 'iconsq ' + (cls || ''), 'aria-label': label, title: label, onclick }); b.innerHTML = svg; return b; }
   const pencilBtn = onclick => iconOnly(ICON_PEN, 'Edit this entry', onclick, 'topedit');
-  const editBar = (onSave, msg) => h('div', { class: 'submitbar' }, h('button', { class: 'btn big', onclick: onSave }, 'SAVE CHANGES'), h('button', { class: 'btn gray', onclick: () => entriesView() }, 'Cancel'), msg);
+  const editBar = (onSave, msg, onReset, onCancel) => h('div', { class: 'submitbar editbar' }, h('button', { class: 'btn big', onclick: onSave }, 'SAVE CHANGES'),
+    h('button', { class: 'btn gray', onclick: () => { onReset(); window.scrollTo({ top: 0 }); U.toast('Back to how the entry was'); } }, 'Reset'), h('button', { class: 'btn gray', onclick: onCancel }, 'Cancel'), msg);
   function entriesView() {
     if (!canWork()) return home();
     const main = shell('Previous Entries', home);
@@ -1207,7 +1206,7 @@
       h('section', { class: 'card' }, h('h3', {}, 'Order – products, quantity and rate'), area.el, termsField),
       h('section', { class: 'card' }, h('h3', {}, 'Payment received'), pay.el)];
     if (mode === 'view') { const fs = h('fieldset', { class: 'ro' }, ...sections); fs.disabled = true; main.append(fs); }
-    else main.append(...sections, mode === 'edit' ? editBar(submit, msg) : submitBar('SUBMIT VISIT', submit, () => clearForm(true), msg));
+    else main.append(...sections, mode === 'edit' ? editBar(submit, msg, () => visitView({ entry: ent, mode: 'edit' }), remote ? () => headEntriesView() : () => entriesView()) : submitBar('SUBMIT VISIT', submit, () => clearForm(true), msg));
     termsUpdate(); syncBeat();
     if (ent) {                                                     // reopen the entry as it was saved
       const f = ent.form;
@@ -1369,7 +1368,7 @@
         say(msg, '');
         submitted(() => showSummary(job.summary)); clearForm();
     };
-    main.append(mode === 'edit' ? editBar(submitPay, msg) : submitBar('SUBMIT PAYMENT', submitPay, clearForm, msg));
+    main.append(mode === 'edit' ? editBar(submitPay, msg, () => payView({ entry: ent, mode: 'edit' }), remote ? () => headEntriesView() : () => entriesView()) : submitBar('SUBMIT PAYMENT', submitPay, clearForm, msg));
   }
 
   /* ------------------------------------------------------------------ Accountant */
@@ -1595,7 +1594,7 @@
   }
 
   /* ------------------------------------------------------------------ the Head's "Previous Entries": anyone's entries (DSO, Manager, Accountant) on any day */
-  const HE = { team: null, name: '', date: '', list: null, err: '' };
+  const HE = { team: null, role: 'DSO', name: '', date: '', list: null, err: '' };
   function nextNo(who, iso, have) {                              // the next free Order No. of 'who' on 'iso', given that day's orders
     const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso), pre = (+m[3]) + '/' + (+m[2]) + '/' + m[1].slice(2) + '-' + who + '-';
     const used = Object.keys(have || {}).filter(n => n.toLowerCase().indexOf(pre.toLowerCase()) === 0);
@@ -1613,24 +1612,23 @@
     }
     headEntriesView(); submitted(() => showSummary(job.summary));
   }
-  function headEntriesView() {
+  function headEntriesView(role) {                               // role: 'DSO' (from As DSO) or 'Manager' (from As Manager)
     if (!isHeadUser()) return home();
+    if (role && role !== HE.role) { HE.role = role; HE.name = ''; HE.list = null; }
     const main = shell('Previous Entries', home), msg = msgBox();
     if (!HE.date) HE.date = U.todayIso();
     const who = h('select', { class: 'inp' }, h('option', { value: '' }, HE.team ? '---- Select ----' : 'Loading…'));
     const dateIn = dateBox(HE.date);
     const showBtn = h('button', { class: 'btn big', onclick: () => load() }, 'Show Entries');
     const listBox = h('div');
-    main.append(h('section', { class: 'card' }, h('h3', {}, 'Whose entries?'), field('Person', who), field('Date', dateIn),
+    main.append(h('section', { class: 'card' }, h('h3', {}, 'Whose entries?'), field(HE.role === 'Manager' ? 'Manager' : 'DSO', who), field('Date', dateIn),
       h('div', { class: 'submitbar' }, showBtn), msg), listBox);
     const posOf = n => ((HE.team || []).find(x => norm(x.name) === norm(n)) || {}).position || '';
     function fillTeam() {
-      const groups = ['DSO', 'Manager', 'Accountant'].map(pos => {
-        const ps = (HE.team || []).filter(x => x.position === pos);
-        return ps.length ? h('optgroup', { label: pos === 'DSO' ? 'DSOs' : pos + 's' }, ...ps.map(x => h('option', { value: x.name }, x.name))) : null;
-      }).filter(Boolean);
-      who.replaceChildren(h('option', { value: '' }, '---- Select ----'), ...groups);
+      const ps = (HE.team || []).filter(x => x.position === HE.role);
+      who.replaceChildren(h('option', { value: '' }, '---- Select ----'), ...ps.map(x => h('option', { value: x.name }, x.name)));
       who.value = HE.name;
+      if (HE.team && !ps.length) say(msg, HE.role === 'Manager' ? 'No Manager is registered under you yet.' : 'No DSO is registered under you yet.', true);
     }
     if (HE.team) fillTeam();
     else authed('entries_of', {}).then(r => { HE.team = r.team || []; fillTeam(); if (!HE.team.length) say(msg, 'Nobody is registered under you yet.', true); })
@@ -1672,7 +1670,7 @@
     async function load() {
       if (busy) return;
       const name = who.value, iso = dateIn.get();
-      if (!name) return say(msg, 'Select the person.', true);
+      if (!name) return say(msg, HE.role === 'Manager' ? 'Select the Manager.' : 'Select the DSO.', true);
       if (!U.parseIso(iso)) return say(msg, 'Choose the date.', true);
       HE.name = name; HE.date = iso; HE.list = null; draw();
       if (posOf(name) === 'Accountant') { HE.list = invoicesOf(name, iso); say(msg, ''); draw(); return; }
@@ -1691,7 +1689,28 @@
   }
 
   /* ------------------------------------------------------------------ start */
+  /* the phone's Back button: goes back like the ← on the screen (closes a popup first); on a home page: "Press back again to close" */
+  const Back = (function () {
+    let armed = false, lastHome = 0;
+    function arm() { if (armed) return; try { history.pushState({ pm: Date.now() }, ''); armed = true; } catch (e) {} }
+    window.addEventListener('popstate', () => {
+      armed = false;
+      const pops = document.querySelectorAll('.modal');
+      if (pops.length) {
+        const m = pops[pops.length - 1], ok = m.querySelector('.okbtn'), x = m.querySelector('.x, .done');
+        if (ok) ok.click(); else if (x) x.click(); else m.remove();
+        arm(); return;
+      }
+      const back = document.querySelector('header.top .back');
+      if (back) { back.click(); arm(); return; }
+      if (Date.now() - lastHome < 2500) { try { history.back(); } catch (e) {} return; }   // second press: close
+      lastHome = Date.now(); U.toast('Press back again to close the app'); arm();
+    });
+    ['pointerdown', 'keydown'].forEach(n => document.addEventListener(n, arm, true));
+    return { arm };
+  })();
   function start(notice) {
+    Back.arm();
     if (typeof Combo === 'undefined' || typeof ProductRows === 'undefined') { if (window.__paShow) window.__paShow('js/ui.js did not load. Upload it into the js folder of the site.'); }
     if (!S.token || !S.profile) return registerView(notice);
     const grace = CFG.OFFLINE_GRACE_DAYS * 864e5;

@@ -225,3 +225,5 @@ fieldset.ro .combo-arrow,fieldset.ro .x,fieldset.ro .btn.ghost{display:none}
 .okrow{display:flex;justify-content:flex-end}
 .btn.okbtn{background:#15803d;color:#fff;min-width:92px}
 .entries-head{margin:6px 4px 10px;align-items:baseline}.entries-head b{font-size:15px}
+
+.editbar{flex-wrap:wrap}.editbar .btn.big{flex:1 1 100%}.editbar .btn.gray{flex:1 1 40%}
