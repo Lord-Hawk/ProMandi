@@ -277,7 +277,7 @@
       if (!d.in) main.append(roundBtn('CHECK IN', 'Start your day', 'in', () => attendanceView()));
       else if (!d.out) main.append(...logCards(), card('PREVIOUS ENTRIES', 'Today’s visits and payments – view or edit them', 'slate', () => entriesView()));
       else main.append(card('DAY ENDED', 'You checked out at ' + d.out + '. Tap to see and share today’s summary', 'slate', () => daySummaryView()));
-    } else if (isHead && pos !== 'Accountant') main.append(...logCards());          // the Head as DSO / Manager: no attendance, "Logged by" instead
+    } else if (isHead && pos !== 'Accountant') main.append(...logCards(), card('PREVIOUS ENTRIES', 'Today’s visits and payments logged here – view or edit them', 'slate', () => entriesView()));          // the Head as DSO / Manager: no attendance, "Logged by" instead
     if (pos !== 'Accountant') main.append(card('BEAT DETAILS', 'View markets of any beat, targets achieved and payments pending', 'gold', () => beatView()));
     else main.append(card('LOG INWARD INVOICES', 'Log the products that came in', 'green', () => inwardView()), card('LOG OUTWARD INVOICES', 'Log the invoices raised to the counters', 'blue', () => outwardView()), card('EDIT PREVIOUS INVOICE', 'Change, add or remove products of an outward invoice, or cancel it', 'slate', () => editView()));
     main.append(card('COUNTER SEARCH', "View any counter's visits, orders, invoices and more", 'teal', () => counterView()));
@@ -716,12 +716,26 @@
       ...modes.map(m => '_' + m + '_: ' + money(t.pay[m])),
       '*Total Value*: ' + money(t.payToday), '_*Cumulative Value*_: ' + money(t.payMonthBefore + t.payToday)].join('\n');
   }
-  function addEntry(kind, text, loc, extra) { if (!isFieldRole()) return; const d = day(); d.entries.push(Object.assign({ kind, time: nowTime(), text, loc: loc || Loc.value || '' }, extra || {})); save('day'); }
-  function updateEntry(ent, job) {                                 // an edited entry keeps its place, time and location
-    const d = day(), i = d.entries.findIndex(e => e.id === ent.id); if (i < 0) return;
-    d.entries[i] = Object.assign({}, d.entries[i], job.entry, { text: job.summary, edited: nowTime() }); save('day');
+  /* the Head's own list of today's entries (As DSO / As Manager), for "Previous Entries" – no attendance, kept per day */
+  const isHeadUser = () => !!S.profile && S.profile.position === 'Head of Operations';
+  S.hday = store.get('hday', null);
+  function headDay() {
+    const t = U.todayIso();
+    if (!S.hday || S.hday.date !== t || S.hday.who !== S.profile.name) { S.hday = { date: t, who: S.profile.name, entries: [] }; save('hday'); }
+    return S.hday;
   }
-  const entryNo = ent => { const i = day().entries.findIndex(e => e.id === ent.id); return i < 0 ? '' : String(i + 1); };
+  const entryDay = () => (isFieldRole() ? day() : headDay());
+  const entryList = () => (isFieldRole() ? day().entries : headDay().entries.filter(e => e.as === asRole));   // the Head: only the page he is on
+  function addEntry(kind, text, loc, extra) {
+    const head = isHeadUser() && (asRole === 'DSO' || asRole === 'Manager');
+    if (!isFieldRole() && !head) return;
+    const d = entryDay(); d.entries.push(Object.assign({ kind, time: nowTime(), text, loc: loc || Loc.value || '' }, head ? { as: asRole } : {}, extra || {})); save(head ? 'hday' : 'day');
+  }
+  function updateEntry(ent, job) {                                 // an edited entry keeps its place, time and location
+    const d = entryDay(), i = d.entries.findIndex(e => e.id === ent.id); if (i < 0) return;
+    d.entries[i] = Object.assign({}, d.entries[i], job.entry, { text: job.summary, edited: nowTime() }); save(isFieldRole() ? 'day' : 'hday');
+  }
+  const entryNo = ent => { const i = entryList().findIndex(e => e.id === ent.id); return i < 0 ? '' : String(i + 1); };
   function dayEntries(d) {                                       // [{kind, time, text, loc}] – this phone's list, else the copy saved on the server
     if (d.entries.length) return d.entries;
     return parseDayText(d.serverText, d.serverTimes, d.serverLocs);
@@ -775,12 +789,12 @@
   function entriesView() {
     if (!canWork()) return home();
     const main = shell('Previous Entries', home);
-    const list = day().entries;
+    const list = entryList(), head = !isFieldRole();
     const pick = (t, k) => { const m = new RegExp('^' + k + ':\\s*(.+)$', 'm').exec(t || ''); return m ? m[1].trim() : ''; };
-    if (!list.length) main.append(h('section', { class: 'card' }, h('p', { class: 'hint' }, 'No entries yet today. Visits and payments you submit today appear here.')));
+    if (!list.length) main.append(h('section', { class: 'card' }, h('p', { class: 'hint' }, head ? 'No entries yet today. Visits and payments you log on this page today appear here.' : 'No entries yet today. Visits and payments you submit today appear here.')));
     list.forEach((e, i) => {
       const open = m => (e.kind === 'Payment' ? payView : visitView)({ entry: e, mode: m });
-      const title = 'Entry ' + (i + 1) + ': ' + (e.market || pick(e.text, 'Market')) + ' - ' + (e.counter || pick(e.text, 'Counter'));
+      const title = 'Entry ' + (i + 1) + ': ' + (e.market || pick(e.text, 'Market')) + ' - ' + (e.counter || pick(e.text, 'Counter')) + (head && e.by ? ' (' + e.by + ')' : '');
       const cap = (e.cat || (e.kind === 'Payment' ? 'Payment without Visit' : 'Visit')) + (e.time ? ' · ' + e.time : '') + (e.edited ? ' · edited ' + e.edited : '');
       const eye = iconOnly(ICON_EYE, 'View', () => open('view')), pen = iconOnly(ICON_PEN, 'Edit', () => open('edit'));
       if (!e.form) eye.disabled = pen.disabled = true;               // entries brought back from the server after a reinstall
@@ -1130,7 +1144,7 @@
     const inp = h('input', { class: 'inp', type: 'text', value: last, placeholder: 'Name of the person', autocapitalize: 'words', autocomplete: 'off', maxlength: 40 });
     const get = () => inp.value.replace(/\s+/g, ' ').trim();
     inp.addEventListener('change', () => { try { localStorage.setItem('pa_loggedby', get()); } catch (e) {} onChange && onChange(); });
-    return { field: field('Logged by', inp, 'bigl'), get };
+    return { field: field('Logged by', inp, 'bigl'), get, set: v => { inp.value = v || ''; } };
   }
 
   /* ------------------------------------------------------------------ DSO: visit */
@@ -1185,6 +1199,7 @@
     termsUpdate(); syncBeat();
     if (ent) {                                                     // reopen the entry as it was saved
       const f = ent.form;
+      if (by && f.by) by.set(f.by);
       if (f.outBeat) { outTick.checked = true; outBeat = true; beatEl.value = ''; }
       market.set(f.market); counter.set(f.counter); counterChanged(); remarks.set(f.remarks || ''); prio(); cooler.value = f.cooler || '';
       (f.lines || []).forEach(l => area.addRow(false, { type: l.type, item: l.item, sub: l.sub, colour: l.colour, qty: l.qty, price: l.rate }));
@@ -1269,8 +1284,8 @@
       if (pays.length) sum.push('', '_*Payments:*_', ...payText(pays));
       const types = {}; lines.forEach(l => { const t = sval(l.type) || 'Other'; types[t] = (types[t] || 0) + l.qty * l.rate; });
       const cat = lines.length && pays.length ? 'Order and Payment' : lines.length ? 'Order on Visit' : pays.length ? 'Payment on Visit' : 'Visit only';
-      const entry = { id: entryId, cat, market: mk, counter: name, orderNo: ono, types, pays,
-        form: { outBeat, market: mk, counter: name, remarks: rem, cooler: cooler.value, lines: lines.map(l => ({ type: l.type, item: l.item, sub: l.sub, colour: l.colour, qty: l.qty, rate: l.rate })), terms: tm, pays } };
+      const entry = { id: entryId, cat, market: mk, counter: name, orderNo: ono, types, pays, by: isHead ? dso : '',
+        form: { by: isHead ? dso : '', outBeat, market: mk, counter: name, remarks: rem, cooler: cooler.value, lines: lines.map(l => ({ type: l.type, item: l.item, sub: l.sub, colour: l.colour, qty: l.qty, rate: l.rate })), terms: tm, pays } };
       return { id: U.uuid(), label, summary: sum.join('\n'), parts, entry, loc: visit.location || '', pays: pays.length ? pays : null, order: ono ? { who: dso, no: ono, value: orderTotal, types } : null,
         overlay: { visit, orders, newCounter: existing ? null : { market: mk, name, code, mobile, type: ctype, gstin }, newMarket: newMarket ? { beat, market: mk } : null, fill: fill && Object.keys(fill).length ? Object.assign({ code, replace }, fill) : null } };
     }
@@ -1300,6 +1315,7 @@
     if (mode === 'view') { const fs = h('fieldset', { class: 'ro' }, ...sections); fs.disabled = true; main.append(fs); }
     else main.append(...sections);
     if (ent) {
+      if (by && ent.form.by) by.set(ent.form.by);
       market.set(ent.form.market); counter.set(ent.form.counter); upd();
       (ent.form.pays || []).forEach(p => { pay.addRow(false); const r = pay.rows[pay.rows.length - 1]; r.amt.value = String(p.amount); r.fill(); r.mode.value = p.mode; });
       pay.update();
@@ -1326,7 +1342,8 @@
           const summary = ['_*Details:*_', 'Date: ' + dmyShort(ds), 'Market: ' + mk, 'Counter: ' + c.name, '', '_*Payments:*_', ...payText(pays), '*Total:* ' + money(total)].join('\n');
           const parts = ent ? [{ kind: 'replace_entry', id: entryId, date: ds }] : [];
           parts.push({ sheet: 'Payments Received', rows: [row] });
-          const entry = { id: entryId, cat: 'Payment without Visit', market: mk, counter: c.name, pays, types: {}, form: { market: mk, counter: c.name, pays } };
+          const pb = isHead ? by.get() : '';
+          const entry = { id: entryId, cat: 'Payment without Visit', market: mk, counter: c.name, pays, types: {}, by: pb, form: { by: pb, market: mk, counter: c.name, pays } };
           return { id: U.uuid(), label: c.name + '  |  payment ₹' + roundRupee(total).toLocaleString('en-IN'), summary, parts, entry, overlay: null, pays };
         }, msg);
         if (!job) return;
