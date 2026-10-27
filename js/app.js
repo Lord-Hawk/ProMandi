@@ -263,6 +263,7 @@
         card('AS DSO', 'Log visits and payments (“Logged by”), beat details and counter search', 'blue', () => { asRole = 'DSO'; home(); }),
         card('AS MANAGER', 'The Manager’s home page – log visits and payments, beat details and counter search', 'violet', () => { asRole = 'Manager'; home(); }),
         card('AS ACCOUNTANT', 'Inward and outward invoices, edit a previous invoice, counter search', 'green', () => { asRole = 'Accountant'; home(); }),
+        card('PREVIOUS ENTRIES', 'See and change anyone’s entries – DSO, Manager or Accountant, any day', 'slate', () => headEntriesView()),
         card('GENERATE SUMMARY', 'A DSO’s work between two dates, day by day, as a PDF', 'indigo', () => rangeSummaryView()));
       const fl = failedList(); if (fl) main.append(fl);
       currentView = { onData() {} };
@@ -277,9 +278,10 @@
       if (!d.in) main.append(roundBtn('CHECK IN', 'Start your day', 'in', () => attendanceView()));
       else if (!d.out) main.append(...logCards(), card('PREVIOUS ENTRIES', 'Today’s visits and payments – view or edit them', 'slate', () => entriesView()));
       else main.append(card('DAY ENDED', 'You checked out at ' + d.out + '. Tap to see and share today’s summary', 'slate', () => daySummaryView()));
-    } else if (isHead && pos !== 'Accountant') main.append(...logCards(), card('PREVIOUS ENTRIES', 'Today’s visits and payments logged here – view or edit them', 'slate', () => entriesView()));          // the Head as DSO / Manager: no attendance, "Logged by" instead
+    } else if (isHead && pos !== 'Accountant') main.append(...logCards(), card('PREVIOUS ENTRIES', 'See and change anyone’s entries – DSO, Manager or Accountant, any day', 'slate', () => headEntriesView()));          // the Head as DSO / Manager: no attendance, "Logged by" instead
     if (pos !== 'Accountant') main.append(card('BEAT DETAILS', 'View markets of any beat, targets achieved and payments pending', 'gold', () => beatView()));
-    else main.append(card('LOG INWARD INVOICES', 'Log the products that came in', 'green', () => inwardView()), card('LOG OUTWARD INVOICES', 'Log the invoices raised to the counters', 'blue', () => outwardView()), card('EDIT PREVIOUS INVOICE', 'Change, add or remove products of an outward invoice, or cancel it', 'slate', () => editView()));
+    else main.append(card('LOG INWARD INVOICES', 'Log the products that came in', 'green', () => inwardView()), card('LOG OUTWARD INVOICES', 'Log the invoices raised to the counters', 'blue', () => outwardView()), card('EDIT PREVIOUS INVOICE', 'Change, add or remove products of an outward invoice, or cancel it', 'slate', () => editView()),
+      ...(isHead ? [card('PREVIOUS ENTRIES', 'See and change anyone’s entries – DSO, Manager or Accountant, any day', 'violet', () => headEntriesView())] : []));
     main.append(card('COUNTER SEARCH', "View any counter's visits, orders, invoices and more", 'teal', () => counterView()));
     if (isFieldRole() && day().in && !day().out) main.append(roundBtn('CHECK OUT', 'End your day', 'out', () => checkoutView()));
     const fl = failedList(); if (fl) main.append(fl);
@@ -373,6 +375,15 @@
   const ICON_COPY = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/></svg>';
   const ICON_SHARE = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4"/><path d="m15.4 6.5-6.8 4"/></svg>';
   function iconBtn(cls, svg, text, onclick) { const b = h('button', { type: 'button', class: 'btn ' + cls + ' iconbtn', onclick }); b.innerHTML = svg; b.append(h('span', {}, text)); return b; }
+  /* "Submitted successfully": a green box in the middle of the screen with OK – after every entry is submitted */
+  function submitted(after) {
+    document.querySelectorAll('.modal.okpop').forEach(x => x.remove());
+    const ok = h('button', { type: 'button', class: 'btn okbtn', onclick: () => { ov.remove(); after && after(); } }, 'OK');
+    const ov = h('div', { class: 'modal okpop' },
+      h('div', { class: 'okbox', role: 'alertdialog', 'aria-label': 'Submitted successfully' },
+        h('p', { class: 'oktext' }, 'Submitted successfully'), h('div', { class: 'okrow' }, ok)));
+    document.body.append(ov); ok.focus();
+  }
   function showSummary(text) {
     const box = h('textarea', { class: 'inp summary', readonly: true, rows: Math.min(18, text.split('\n').length + 1) }); box.value = text;
     const close = () => ov.remove();
@@ -387,7 +398,7 @@
     }
     const ov = h('div', { class: 'modal', onclick: e => { if (e.target === ov) close(); } },
       h('div', { class: 'modal-box', role: 'dialog', 'aria-label': 'Entry summary' },
-        h('div', { class: 'row-between modal-head' }, h('h2', {}, '✔ Saved – summary'), h('button', { class: 'x', onclick: close, 'aria-label': 'Close' }, '✕')),
+        h('div', { class: 'row-between modal-head' }, h('h2', {}, 'Entry summary'), h('button', { class: 'x', onclick: close, 'aria-label': 'Close' }, '✕')),
         h('div', { class: 'modal-body' }, box,
           h('div', { class: 'summary-actions' }, iconBtn('', ICON_COPY, 'Copy', () => copy(false)), iconBtn('green', ICON_SHARE, 'Share', share)),
           h('button', { type: 'button', class: 'btn gray done', onclick: close }, 'Done'))));
@@ -1150,8 +1161,9 @@
   /* ------------------------------------------------------------------ DSO: visit */
   function visitView(opts) {
     const ent = (opts && opts.entry) || null, mode = ent ? (opts.mode || 'view') : 'new';   // 'new' | 'view' (read only) | 'edit'
+    const remote = !!(ent && ent.remote);                          // the Head opening anyone's entry from "Previous Entries"
     if (!canWork() || (ent && !ent.form)) return home();
-    const main = shell(mode === 'new' ? 'Log Visits' : (mode === 'view' ? 'Entry ' : 'Edit Entry ') + entryNo(ent), ent ? entriesView : home,
+    const main = shell(mode === 'new' ? 'Log Visits' : (mode === 'view' ? 'Entry ' : 'Edit Entry ') + (remote ? ent.no : entryNo(ent)), remote ? () => headEntriesView() : ent ? entriesView : home,
       mode === 'view' ? pencilBtn(() => visitView({ entry: ent, mode: 'edit' })) : null);
     Loc.refresh();
     const msg = msgBox(), isHead = S.profile.position === 'Head of Operations';
@@ -1159,7 +1171,7 @@
     if (isHead) sync(true);                                       // fresh "today's orders" of everyone: right Order No. and Daily Cumulative for the "Logged by" person
     const dsoName = () => (isHead ? by.get() : (S.profile.dso || S.profile.name));
     let outBeat = false, calBeat = '';
-    const date = { get: () => U.todayIso() };                       // no Date box for a DSO: the date is always today's
+    const date = { get: () => (remote ? ent.date : U.todayIso()) };   // no Date box: today's (an entry opened by the Head: its own day)
     const beatEl = h('input', { class: 'inp', readonly: true, placeholder: 'Beat' });
     const outTick = h('input', { type: 'checkbox' });
     const market = new Combo({ placeholder: 'Market', values: () => (outBeat ? model.sheetMarkets() : isHead ? model.marketsOf(by.get(), beatEl.value || calBeat) : model.marketsFor(beatEl.value || calBeat)), onInput: () => counterChanged(), onChange: () => { counter.set(''); counterChanged(); } });
@@ -1178,7 +1190,7 @@
     const counterChanged = () => { cd.update(market.get(), counter.get()); area.refreshRates(); if (counter.get()) Loc.get(); };
     function termsUpdate() { if (!termsField) return; termsField.hidden = !area.rows.length || area.cancelled; if (termsField.hidden) terms.value = ''; }
     function syncBeat() {
-      const d = date.get(), b = U.parseIso(d) ? beatFor(d) : '';
+      const d = date.get(), b = remote && ent.form.beat ? ent.form.beat : U.parseIso(d) ? beatFor(d) : '';
       if (b !== calBeat) { calBeat = b; outBeat = false; outTick.checked = false; beatEl.value = b; market.set(''); counter.set(''); counterChanged(); }
       prio();
     }
@@ -1217,12 +1229,13 @@
       [market, counter, remarks, cd.typeCombo].forEach(c => c.commit()); area.commitAll();
       const job = tryRun(build, msg); if (!job) return;
       submitJob(job);
-      if (job.order) noteOrder(job.order.who, job.order.no, job.order.value);
-      if (ent && ent.orderNo && (!job.order || job.order.no !== ent.orderNo)) noteOrder(dsoName(), ent.orderNo, 0);   // the order was removed in the edit
-      if (ent) { updateEntry(ent, job); showSummary(job.summary); entriesView(); return; }
+      if (job.order && !remote) noteOrder(job.order.who, job.order.no, job.order.value);
+      if (ent && !remote && ent.orderNo && (!job.order || job.order.no !== ent.orderNo)) noteOrder(dsoName(), ent.orderNo, 0);   // the order was removed in the edit
+      if (remote) { remoteSaved(ent, job); return; }
+      if (ent) { updateEntry(ent, job); entriesView(); submitted(() => showSummary(job.summary)); return; }
       addEntry('Visit', job.summary, job.loc, job.entry);
-      say(msg, '✔ Saved on this device' + (online ? ' – uploading…' : ' – will upload when you are online') + '  (' + job.label + ')');
-      showSummary(job.summary);
+      say(msg, '');
+      submitted(() => showSummary(job.summary));
       clearForm(); window.scrollTo({ top: 0, behavior: 'smooth' });
     }
     function build() {
@@ -1249,8 +1262,9 @@
       const entryId = ent ? ent.id : U.uuid();
       if (lines.length) {
         const total = lines.reduce((a, l) => a + l.qty * l.rate, 0);
-        ono = ent && ent.orderNo ? ent.orderNo : nextOrderNo(dso, ds); orderTotal = roundRupee(total);      // an edited order keeps its Order No.
-        const others = ordersOf(dso, ds); delete others[ono];
+        const keep = ent && ent.orderNo && (!remote || ent.orderNo.toLowerCase().indexOf('-' + dso.toLowerCase() + '-') > 0);
+        ono = keep ? ent.orderNo : remote ? nextNo(dso, ds, ent.dayOrders) : nextOrderNo(dso, ds); orderTotal = roundRupee(total);      // an edited order keeps its Order No.
+        const others = remote ? (norm(dso) === norm(ent.form.by) ? Object.assign({}, ent.dayOrders || {}) : {}) : ordersOf(dso, ds); delete others[ono];
         cumulative = Object.values(others).reduce((a, v) => a + (+v || 0), 0) + orderTotal;
         const nd = TERM_DAYS[tm] ? U.addDays(ds, TERM_DAYS[tm]) : '';
         const wk = nd ? (model.beatForDate(nd) || U.weekday(nd)) : '';
@@ -1294,13 +1308,14 @@
   /* ------------------------------------------------------------------ DSO: payment */
   function payView(opts) {
     const ent = (opts && opts.entry) || null, mode = ent ? (opts.mode || 'view') : 'new';
+    const remote = !!(ent && ent.remote);
     if (!canWork() || (ent && !ent.form)) return home();
-    const main = shell(mode === 'new' ? 'Log Payments' : (mode === 'view' ? 'Entry ' : 'Edit Entry ') + entryNo(ent), ent ? entriesView : home,
+    const main = shell(mode === 'new' ? 'Log Payments' : (mode === 'view' ? 'Entry ' : 'Edit Entry ') + (remote ? ent.no : entryNo(ent)), remote ? () => headEntriesView() : ent ? entriesView : home,
       mode === 'view' ? pencilBtn(() => payView({ entry: ent, mode: 'edit' })) : null);
     Loc.refresh();
     const msg = msgBox(), isHead = S.profile.position === 'Head of Operations';
     const by = isHead ? loggedByBox() : null;
-    const date = { get: () => U.todayIso() };                       // no Date box for a DSO: the date is always today's
+    const date = { get: () => (remote ? ent.date : U.todayIso()) };
     const info = h('div', { class: 'hint' });
     const market = new Combo({ placeholder: 'Market', strict: true, values: () => model.allMarkets(), onChange: () => { counter.set(''); upd(); } });
     const counter = new Combo({ placeholder: 'Counter', strict: true, values: () => model.countersFor(market.get()), onChange: upd });
@@ -1348,10 +1363,11 @@
         }, msg);
         if (!job) return;
         submitJob(job);
-        if (ent) { updateEntry(ent, job); showSummary(job.summary); entriesView(); return; }
+        if (remote) { remoteSaved(ent, job); return; }
+        if (ent) { updateEntry(ent, job); entriesView(); submitted(() => showSummary(job.summary)); return; }
         addEntry('Payment', job.summary, Loc.get(), job.entry);
-        say(msg, '✔ Saved on this device' + (online ? ' – uploading…' : ' – will upload when you are online') + '  (' + job.label + ')');
-        showSummary(job.summary); clearForm();
+        say(msg, '');
+        submitted(() => showSummary(job.summary)); clearForm();
     };
     main.append(mode === 'edit' ? editBar(submitPay, msg) : submitBar('SUBMIT PAYMENT', submitPay, clearForm, msg));
   }
@@ -1381,7 +1397,7 @@
                    overlay: { inwards: rows, inwardInvoice: { no, data: inwardData(ds, d, lines) } } };
         }, msg);
         if (!job) return;
-        submitJob(job); say(msg, '✔ Saved on this device' + (online ? ' – uploading…' : ' – will upload when you are online')); clear();
+        submitJob(job); say(msg, ''); submitted(); clear();
       }, clear, msg));
     currentView = { onData() { area.refreshRates(); } };
   }
@@ -1432,7 +1448,7 @@
           return { id: U.uuid(), label: `${ino}  |  ${c.name}  |  ₹${billing.toLocaleString('en-IN')}`, parts, overlay: { invoice: { no: ino, data }, fill: hasFill ? Object.assign({ code: c.code, replace }, fill) : null } };
         }, msg);
         if (!job) return;
-        submitJob(job); say(msg, '✔ Saved on this device' + (online ? ' – uploading…' : ' – will upload when you are online') + '  (' + job.label + ')'); clear();
+        submitJob(job); say(msg, ''); submitted(); clear();
       }, clear, msg));
     invChanged();
     currentView = { onData() { counterChanged(); } };
@@ -1455,18 +1471,23 @@
     'after discount': plain(Math.round(l.qty * l.rate * (100 - d)) / 100) }));        // qty x price with the cash discount taken off
   const inwardData = (ds, d, lines) => ({ date: ds, discount: d, lines: lines.map(l => ({ type: l.type, item: l.item, sub: l.sub, colour: l.colour, qty: l.qty, price: plain(l.rate) })) });
 
-  function editView() {
-    const main = shell('Edit Previous Invoice', home), msg = msgBox();
+  function editView(opts) {                                      // opts (the Head's "Previous Entries"): {type: 'outward'|'inward', no, mode: 'view'|'edit', n}
+    const o = opts || null;
+    const main = o ? shell((o.mode === 'view' ? 'Entry ' : 'Edit Entry ') + o.n, () => headEntriesView(), o.mode === 'view' ? pencilBtn(() => editView(Object.assign({}, o, { mode: 'edit' }))) : null)
+                   : shell('Edit Previous Invoice', home), msg = msgBox();
     const typeSel = h('select', { class: 'inp' }, h('option', { value: '' }, '---- Select ----'), h('option', { value: 'inward' }, 'Inward'), h('option', { value: 'outward' }, 'Outward'));
     const outBox = h('div', { hidden: true }), inBox = h('div', { hidden: true });
-    main.append(h('section', { class: 'card' }, field('Choose Type', typeSel)), msg, outBox, inBox);
+    const after = o ? () => headEntriesView() : null;
+    if (o && o.mode === 'view') { const fs = h('fieldset', { class: 'ro' }, h('section', { class: 'card' }, field('Choose Type', typeSel)), outBox, inBox); fs.disabled = true; main.append(fs, msg); }
+    else main.append(h('section', { class: 'card' }, field('Choose Type', typeSel)), msg, outBox, inBox);
     typeSel.addEventListener('change', () => { outBox.hidden = typeSel.value !== 'outward'; inBox.hidden = typeSel.value !== 'inward'; say(msg, ''); });
-    const views = [outwardEdit(outBox, msg), inwardEdit(inBox, msg)];
+    const views = [outwardEdit(outBox, msg, after), inwardEdit(inBox, msg, after)];
+    if (o) { typeSel.value = o.type; typeSel.disabled = true; outBox.hidden = o.type !== 'outward'; inBox.hidden = o.type !== 'inward'; views[o.type === 'outward' ? 0 : 1].open(o.no); if (o.mode === 'view') main.querySelectorAll('.submitbar').forEach(x => x.remove()); }
     currentView = { onData() { views.forEach(v => v && v.onData && v.onData()); } };
   }
 
   /* EDIT an INWARD invoice: type its Invoice Number -> date (read only), products and cash discount can be changed */
-  function inwardEdit(box, msg) {
+  function inwardEdit(box, msg, after) {
     const invNo = h('input', { class: 'inp', placeholder: 'Invoice No.', autocomplete: 'off', autocapitalize: 'characters' });
     const note = h('div', { class: 'hint' }, 'Type the Invoice Number of the inward invoice.');
     const dateRo = h('input', { class: 'inp', readonly: true });
@@ -1506,15 +1527,16 @@
           overlay: { inwards: inwardRows(w.date, current, d, lines), inwardInvoice: { no: current, data: inwardData(w.date, d, lines) } } };
       }, msg);
       if (!job) return;
-      submitJob(job); say(msg, '✔ Saved on this device' + (online ? ' – uploading…' : ' – will upload when you are online') + '  (' + job.label + ')');
+      submitJob(job); say(msg, ''); submitted(after);
+      if (after) return;
       invNo.value = ''; lookup();
     }
     invNo.addEventListener('input', lookup);
-    return { onData() { if (!current) lookup(); } };
+    return { onData() { if (!current) lookup(); }, open(no) { invNo.value = no; invNo.readOnly = true; lookup(); } };
   }
 
   /* EDIT an OUTWARD invoice (Invoice Record) */
-  function outwardEdit(box, msg) {
+  function outwardEdit(box, msg, after) {
     const serial = h('input', { class: 'inp', inputmode: 'numeric', placeholder: 'Serial No.', autocomplete: 'off' });
     const invNo = h('input', { class: 'inp', readonly: true, placeholder: 'Invoice Number' });
     const note = h('div', { class: 'hint' }, 'Type the Serial Number of the invoice.');
@@ -1563,12 +1585,109 @@
           parts: [{ kind: 'invoice_edit', invoice: current, rows }], overlay: { invoice: { no: current, data } } };
       }, msg);
       if (!job) return;
-      submitJob(job); say(msg, '✔ Saved on this device' + (online ? ' – uploading…' : ' – will upload when you are online') + '  (' + job.label + ')');
+      submitJob(job); say(msg, ''); submitted(after);
+      if (after) return;
       serial.value = ''; lookup();
     }
     serial.addEventListener('input', lookup);
     box.append(h('section', { class: 'card' }, h('h3', {}, 'Find the invoice'), h('div', { class: 'grid2' }, field('Serial Number', serial), field('Invoice Number', invNo)), note), detail);
-    return { onData() { if (!current) lookup(); } };
+    return { onData() { if (!current) lookup(); }, open(no) { serial.value = String(no).split('/')[1] || ''; serial.readOnly = true; invNo.value = no; if (model.invoices[no]) load(no); } };
+  }
+
+  /* ------------------------------------------------------------------ the Head's "Previous Entries": anyone's entries (DSO, Manager, Accountant) on any day */
+  const HE = { team: null, name: '', date: '', list: null, err: '' };
+  function nextNo(who, iso, have) {                              // the next free Order No. of 'who' on 'iso', given that day's orders
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso), pre = (+m[3]) + '/' + (+m[2]) + '/' + m[1].slice(2) + '-' + who + '-';
+    const used = Object.keys(have || {}).filter(n => n.toLowerCase().indexOf(pre.toLowerCase()) === 0);
+    return pre + (used.reduce((a, n) => Math.max(a, +n.slice(pre.length) || 0), 0) + 1);
+  }
+  function remoteSaved(ent, job) {                               // the Head edited someone's entry: update the list shown, back to it
+    if (HE.list) {
+      const i = HE.list.findIndex(e => e.id === ent.id);
+      if (i >= 0) {
+        const e = Object.assign({}, HE.list[i], job.entry, { remote: true, edited: nowTime() });
+        if (job.order) { e.dayOrders = Object.assign({}, e.dayOrders || {}); if (ent.orderNo) delete e.dayOrders[ent.orderNo]; e.dayOrders[job.order.no] = job.order.value; }
+        HE.list[i] = e;
+        HE.list.forEach(x => { if (x.kind !== 'Invoice') x.dayOrders = HE.list[i].dayOrders || x.dayOrders; });
+      }
+    }
+    headEntriesView(); submitted(() => showSummary(job.summary));
+  }
+  function headEntriesView() {
+    if (!isHeadUser()) return home();
+    const main = shell('Previous Entries', home), msg = msgBox();
+    if (!HE.date) HE.date = U.todayIso();
+    const who = h('select', { class: 'inp' }, h('option', { value: '' }, HE.team ? '---- Select ----' : 'Loading…'));
+    const dateIn = dateBox(HE.date);
+    const showBtn = h('button', { class: 'btn big', onclick: () => load() }, 'Show Entries');
+    const listBox = h('div');
+    main.append(h('section', { class: 'card' }, h('h3', {}, 'Whose entries?'), field('Person', who), field('Date', dateIn),
+      h('div', { class: 'submitbar' }, showBtn), msg), listBox);
+    const posOf = n => ((HE.team || []).find(x => norm(x.name) === norm(n)) || {}).position || '';
+    function fillTeam() {
+      const groups = ['DSO', 'Manager', 'Accountant'].map(pos => {
+        const ps = (HE.team || []).filter(x => x.position === pos);
+        return ps.length ? h('optgroup', { label: pos === 'DSO' ? 'DSOs' : pos + 's' }, ...ps.map(x => h('option', { value: x.name }, x.name))) : null;
+      }).filter(Boolean);
+      who.replaceChildren(h('option', { value: '' }, '---- Select ----'), ...groups);
+      who.value = HE.name;
+    }
+    if (HE.team) fillTeam();
+    else authed('entries_of', {}).then(r => { HE.team = r.team || []; fillTeam(); if (!HE.team.length) say(msg, 'Nobody is registered under you yet.', true); })
+      .catch(e => { who.replaceChildren(h('option', { value: '' }, '---- Select ----')); say(msg, e.offline ? 'No internet – the list of people needs a connection.' : e.message, true); });
+    function draw() {
+      listBox.replaceChildren();
+      if (!HE.list) return;
+      if (posOf(HE.name) === 'Accountant') HE.list = invoicesOf(HE.name, HE.date);   // the invoice lists on the phone already carry any edit
+      const head = h('div', { class: 'row-between entries-head' }, h('b', {}, HE.name + ' · ' + dmyFull(HE.date)), h('span', { class: 'hint' }, HE.list.length + (HE.list.length === 1 ? ' entry' : ' entries')));
+      listBox.append(head);
+      if (!HE.list.length) { listBox.append(h('section', { class: 'card' }, h('p', { class: 'hint' }, 'No entries on this day.'))); return; }
+      HE.list.forEach((e, i) => {
+        e.no = String(i + 1);
+        let open;
+        if (e.kind === 'Invoice') open = m => editView({ type: e.type, no: e.invNo, mode: m, n: e.no });
+        else open = m => (e.kind === 'Payment' ? payView : visitView)({ entry: e, mode: m });
+        const title = 'Entry ' + (i + 1) + ': ' + e.market + ' - ' + e.counter;
+        const cap = e.cat + (e.edited ? ' · edited ' + e.edited : '');
+        const eye = iconOnly(ICON_EYE, 'View', () => open('view')), pen = iconOnly(ICON_PEN, 'Edit', () => open('edit'));
+        if (e.kind !== 'Invoice' && !e.form) eye.disabled = pen.disabled = true;
+        listBox.append(h('div', { class: 'entrybox' }, h('div', { class: 'eb-text' }, h('b', {}, title), h('span', {}, cap)), h('div', { class: 'eb-acts' }, eye, pen)));
+      });
+    }
+    function invoicesOf(name, iso) {                           // an Accountant's outward and inward invoices of the day (from the lists on the phone)
+      const mine = x => x.date === iso && (!x.by || norm(x.by) === norm(name));
+      const out = Object.keys(model.invoices).filter(k => mine(model.invoices[k])).map(k => {
+        const v = model.invoices[k], tot = (v.lines || []).reduce((a, l) => a + l.qty * l.price, 0);
+        return { kind: 'Invoice', type: 'outward', invNo: k, id: 'o:' + k, market: 'Outward Invoice ' + k, counter: v.counterName || '', cat: 'Outward Invoice · ' + (tot ? money(roundRupee(tot)) : 'cancelled') };
+      });
+      const inw = Object.keys(model.inwardInvoices).filter(k => mine(model.inwardInvoices[k])).map(k => {
+        const v = model.inwardInvoices[k], tot = (v.lines || []).reduce((a, l) => a + l.qty * l.price, 0);
+        return { kind: 'Invoice', type: 'inward', invNo: k, id: 'i:' + k, market: 'Inward Invoice', counter: k, cat: 'Inward Invoice · ' + money(roundRupee(tot)) };
+      });
+      const serialOf = k => +(String(k).split('/')[1]) || 0;
+      out.sort((a, b) => serialOf(a.invNo) - serialOf(b.invNo));
+      return out.concat(inw);
+    }
+    let busy = false;
+    async function load() {
+      if (busy) return;
+      const name = who.value, iso = dateIn.get();
+      if (!name) return say(msg, 'Select the person.', true);
+      if (!U.parseIso(iso)) return say(msg, 'Choose the date.', true);
+      HE.name = name; HE.date = iso; HE.list = null; draw();
+      if (posOf(name) === 'Accountant') { HE.list = invoicesOf(name, iso); say(msg, ''); draw(); return; }
+      busy = true; showBtn.disabled = true; say(msg, 'Getting ' + name + '’s entries…');
+      try {
+        let r;
+        try { r = await authed('entries_of', { name, date: iso }); }
+        catch (e) { throw new Error(e.offline ? 'No internet – the entries need a connection.' : e.message); }
+        HE.list = (r.entries || []).map(e => Object.assign(e, { remote: true, date: iso, dayOrders: r.dayOrders || {} }));
+        say(msg, ''); draw();
+      } catch (e) { say(msg, e.message, true); }
+      finally { busy = false; showBtn.disabled = false; }
+    }
+    draw();
+    currentView = { onData() {} };
   }
 
   /* ------------------------------------------------------------------ start */
