@@ -263,7 +263,8 @@
         card('AS DSO', 'Log visits and payments (“Logged by”), beat details and counter search', 'blue', () => { asRole = 'DSO'; home(); }),
         card('AS MANAGER', 'The Manager’s home page – log visits and payments, beat details and counter search', 'violet', () => { asRole = 'Manager'; home(); }),
         card('AS ACCOUNTANT', 'Inward and outward invoices, edit a previous invoice, counter search', 'green', () => { asRole = 'Accountant'; home(); }),
-        card('GENERATE SUMMARY', 'A DSO’s work between two dates, day by day, as a PDF', 'indigo', () => rangeSummaryView()));
+        card('GENERATE SUMMARY', 'A DSO’s work between two dates, day by day, as a PDF', 'indigo', () => rangeSummaryView()),
+        card('PROFIT AND LOSS', 'Daily, monthly and yearly profit from the invoices', 'cyan', () => pnlView()));
       const fl = failedList(); if (fl) main.append(fl);
       currentView = { onData() {} };
       return;
@@ -281,6 +282,7 @@
     if (pos !== 'Accountant') main.append(card('BEAT DETAILS', 'View markets of any beat, targets achieved and payments pending', 'gold', () => beatView()));
     else main.append(card('LOG INWARD INVOICES', 'Log the products that came in', 'green', () => inwardView()), card('LOG OUTWARD INVOICES', 'Log the invoices raised to the counters', 'blue', () => outwardView()), card('EDIT PREVIOUS INVOICE', 'Change, add or remove products of an outward invoice, or cancel it', 'slate', () => editView()));
     main.append(card('COUNTER SEARCH', "View any counter's visits, orders, invoices and more", 'teal', () => counterView()));
+    if (!isHead && own === 'Manager') main.append(card('PROFIT AND LOSS', 'Daily, monthly and yearly profit from the invoices', 'cyan', () => pnlView()));
     if (isFieldRole() && day().in && !day().out) main.append(roundBtn('CHECK OUT', 'End your day', 'out', () => checkoutView()));
     const fl = failedList(); if (fl) main.append(fl);
     const key = dayKey();
@@ -1743,6 +1745,87 @@
       finally { busy = false; showBtn.disabled = false; }
     }
     draw();
+    currentView = { onData() {} };
+  }
+
+  /* ------------------------------------------------------------------ "Profit and Loss" (Manager and Head of Operations) */
+  const PNL = { data: null, mode: 'general', gst: 'in' };
+  const ICON_SORT = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 4v16"/><path d="M3 8l4-4 4 4"/><path d="M17 20V4"/><path d="M13 16l4 4 4-4"/></svg>';
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  function pnlView() {
+    const pos = S.profile && S.profile.position;
+    if (pos !== 'Manager' && pos !== 'Head of Operations') return home();
+    const main = shell('Profit and Loss', home), msg = msgBox();
+    const sortLbl = h('span', {}, PNL.mode === 'general' ? 'General' : 'By Product');
+    const sortBtn = h('button', { type: 'button', class: 'btn sortbtn', onclick: pickMode, 'aria-label': 'Sort' }); sortBtn.innerHTML = ICON_SORT; sortBtn.append(sortLbl);
+    const gst = h('select', { class: 'inp gstsel' }, h('option', { value: 'in' }, 'in-GST'), h('option', { value: 'ex' }, 'ex-GST'));
+    gst.value = PNL.gst; gst.addEventListener('change', () => { PNL.gst = gst.value; draw(); });
+    const body = h('div');
+    main.append(h('div', { class: 'pnlbar' }, sortBtn, gst), msg, body);
+    function pickMode() {
+      const close = () => ov.remove();
+      const opt = (v, t) => h('button', { type: 'button', class: 'btn pnlopt' + (PNL.mode === v ? ' on' : ''), onclick: () => { PNL.mode = v; sortLbl.textContent = t; close(); draw(); } }, t);
+      const ov = h('div', { class: 'modal okpop', onclick: e => { if (e.target === ov) close(); } },
+        h('div', { class: 'modal-box pnlpop', role: 'dialog', 'aria-label': 'Sort' },
+          h('div', { class: 'row-between modal-head' }, h('h2', {}, 'Show'), h('button', { class: 'x', onclick: close, 'aria-label': 'Close' }, '✕')),
+          h('div', { class: 'modal-body' }, opt('general', 'General'), opt('product', 'By Product'))));
+      document.body.append(ov);
+    }
+    const f = () => (PNL.gst === 'ex' ? 100 / 118 : 1);
+    const rs = x => { const v = Math.round(x * f()); return (v < 0 ? '−' : '') + money(Math.abs(v)); };
+    const pct = (p, b) => { if (!(b > 0)) return '–'; const v = Math.round(p / b * 1000) / 10; return (v === 0 ? 0 : v).toFixed(1) + '%'; };
+    const table = (head, rows, total) => h('div', { class: 'tblwrap' }, h('table', { class: 'beat pnl' },
+      h('thead', {}, h('tr', {}, ...head.map((x, i) => h('th', { class: i ? 'num' : '' }, x)))),
+      h('tbody', {}, ...rows.map(r => h('tr', { class: r.cls || '' }, ...r.cells.map((x, i) => h('td', { class: (i ? 'num ' : '') + (r.neg && i >= head.length - 2 ? 'neg' : '') }, x)))), total ? h('tr', { class: 'sumrow' }, ...total.cells.map((x, i) => h('td', { class: (i ? 'num ' : '') + (total.neg && i >= head.length - 2 ? 'neg' : '') }, x))) : null)));
+    function draw() {
+      body.replaceChildren();
+      const D = PNL.data; if (!D) return;
+      const buy = D.buy || {}, key = (i, s) => norm(i) + '|' + norm(s), name = (i, s) => [i, s].filter(Boolean).join(' ');
+      const missing = {}, ok = [];
+      D.lines.forEach(l => { const b = buy[key(l[1], l[2])]; if (!b) missing[name(l[1], l[2])] = 1; else ok.push({ d: l[0], p: name(l[1], l[2]), q: l[3], s: l[3] * l[4], b: l[3] * b[2], bp: b[2] }); });
+      const miss = Object.keys(missing).sort();
+      if (D.noSheet) body.append(h('div', { class: 'msg bad' }, 'Error: the Google Sheet has no “Buy Price” tab.'));
+      if (miss.length) body.append(h('div', { class: 'msg bad pnlerr' }, ...miss.map(m => h('div', {}, 'Error: Buy Price not available for ' + m))));
+      const today = D.today, ym = today.slice(0, 7), yr = today.slice(0, 4);
+      const sum = arr => arr.reduce((a, x) => ({ q: a.q + x.q, s: a.s + x.s, b: a.b + x.b }), { q: 0, s: 0, b: 0 });
+      const rowOf = (label, t) => ({ cells: [label, String(t.q || '–'), t.q ? rs(t.s) : '–', t.q ? rs(t.b) : '–', t.q ? rs(t.s - t.b) : '–', t.q ? pct(t.s - t.b, t.b) : '–'], neg: t.s < t.b });
+      if (PNL.mode === 'general') {
+        const head = ['Day', 'No. of items sold', 'Sale Price', 'Buy Price', 'Profit', 'Profit %'];
+        const days = [], last = +today.slice(8, 10);
+        for (let i = 1; i <= last; i++) { const iso = ym + '-' + String(i).padStart(2, '0'); days.push(rowOf(dmyFull(iso).slice(0, 5), sum(ok.filter(x => x.d === iso)))); }
+        const mrows = [], lastM = +today.slice(5, 7);
+        for (let m = 1; m <= lastM; m++) { const k = yr + '-' + String(m).padStart(2, '0'); mrows.push(rowOf(MONTHS[m - 1] + ' ' + yr, sum(ok.filter(x => x.d.slice(0, 7) === k)))); }
+        const years = [...new Set(ok.map(x => x.d.slice(0, 4)).concat([yr]))].sort();
+        const yrows = years.map(y => rowOf(y, sum(ok.filter(x => x.d.slice(0, 4) === y))));
+        const tot = (label, list) => rowOf(label, sum(list));
+        body.append(
+          h('section', { class: 'card' }, h('h3', {}, 'Daily – ' + MONTHS[lastM - 1] + ' ' + yr), table(head, days, tot('Total', ok.filter(x => x.d.slice(0, 7) === ym)))),
+          h('section', { class: 'card' }, h('h3', {}, 'Monthly – ' + yr), table(['Month', ...head.slice(1)], mrows, tot('Total', ok.filter(x => x.d.slice(0, 4) === yr)))),
+          h('section', { class: 'card' }, h('h3', {}, 'Yearly'), table(['Year', ...head.slice(1)], yrows, tot('Total', ok))));
+      } else {
+        const head = ['Product', 'Average Sale Price', 'Average Buy Price', 'Profit / pc.', 'Profit %'];
+        const prodTable = list => {
+          const by = {};
+          list.forEach(x => { const a = by[x.p] || (by[x.p] = { q: 0, s: 0, b: 0 }); a.q += x.q; a.s += x.s; a.b += x.b; });
+          const rows = Object.keys(by).sort((a, b) => a.localeCompare(b)).map(p => { const a = by[p], as = a.s / a.q, ab = a.b / a.q; return { cells: [p, rs(as), rs(ab), rs(as - ab), pct(as - ab, ab)], neg: as < ab }; });
+          return rows.length ? table(head, rows) : h('p', { class: 'hint' }, 'No products sold.');
+        };
+        const missRows = list => miss.filter(m => D.lines.some(l => name(l[1], l[2]) === m && list(l[0]))).map(m => h('div', { class: 'msg bad' }, 'Error: Buy Price not available for ' + m));
+        const today0 = x => x === today, month0 = x => x.slice(0, 7) === ym, year0 = x => x.slice(0, 4) === yr;
+        body.append(
+          h('section', { class: 'card' }, h('h3', {}, 'Today – ' + dmyFull(today)), prodTable(ok.filter(x => today0(x.d))), ...missRows(today0)),
+          h('section', { class: 'card' }, h('h3', {}, 'This month – ' + MONTHS[+ym.slice(5) - 1] + ' ' + yr), prodTable(ok.filter(x => month0(x.d))), ...missRows(month0)),
+          h('section', { class: 'card' }, h('h3', {}, 'This year – ' + yr), prodTable(ok.filter(x => year0(x.d))), ...missRows(year0)));
+      }
+      body.append(h('p', { class: 'hint' }, (PNL.gst === 'ex' ? 'ex-GST: amounts × 100/118. ' : 'in-GST: amounts as in the invoices. ') + 'Profit % = Profit ÷ Buy Price × 100.'));
+    }
+    async function load() {
+      say(msg, 'Loading the invoices…');
+      try { PNL.data = await authed('pnl', {}); say(msg, ''); }
+      catch (e) { say(msg, e.offline ? (PNL.data ? 'No internet – showing the figures from the last time.' : 'No internet – Profit and Loss needs a connection.') : e.message, true); }
+      draw();
+    }
+    draw(); load();
     currentView = { onData() {} };
   }
 

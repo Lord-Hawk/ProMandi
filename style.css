@@ -227,3 +227,16 @@ fieldset.ro .combo-arrow,fieldset.ro .x,fieldset.ro .btn.ghost{display:none}
 .entries-head{margin:6px 4px 10px;align-items:baseline}.entries-head b{font-size:15px}
 
 .editbar{flex-wrap:wrap}.editbar .btn.big{flex:1 1 100%}.editbar .btn.gray{flex:1 1 40%}
+
+/* Profit and Loss */
+.homecard.cyan{background:#0E7490}
+.pnlbar{display:flex;gap:10px;align-items:center;margin:2px 0 12px}
+.btn.sortbtn{display:inline-flex;align-items:center;gap:8px;background:#fff;color:var(--header);border:1.5px solid #c7d2e4;padding:10px 14px;font-weight:700}
+.inp.gstsel{width:auto;flex:0 0 auto;margin:0}
+.pnlpop{max-width:340px}.pnlpop .modal-body{display:grid;gap:10px;padding-bottom:16px}
+.btn.pnlopt{background:#eef2f7;color:#1e293b;border:2px solid transparent}.btn.pnlopt.on{border-color:var(--header);background:#e0e7ff;color:var(--header)}
+.tblwrap{overflow-x:auto;-webkit-overflow-scrolling:touch;margin:0 -4px}
+table.pnl th.num{text-align:right}table.pnl td.neg{color:var(--red)}
+.pnlerr div+div{margin-top:4px}
+table.pnl{font-size:11px}table.pnl th{font-size:10.5px;padding:5px 3px}table.pnl td{padding:6px 3px}
+table.pnl td:first-child{min-width:44px}
