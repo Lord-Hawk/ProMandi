@@ -717,10 +717,11 @@
   function dayReportText(name, d, t) {
     const r0 = x => Math.round(x), types = Object.keys(t.types || {}).filter(k => t.types[k]).sort((a, b) => a.localeCompare(b));
     const modes = ['Cash', 'UPI', 'Cheque', 'Card'].filter(m => t.pay && t.pay[m]);
-    return ['** *_DAY  END  ORDER  REPORT_* **', '',
+    return ['***** *_DAY END_* *****', '',
+      '** _*ORDER REPORT*_ **',
       'Name: ' + name, 'Beat day: ' + beatDay(d.beat || t.beat || calBeat(d.date)), 'Date: ' + dmyFull(d.date),
-      ...types.map(k => ' _' + k + ' value_: ' + money(r0(t.types[k]))),
-      '', ' *Total value*: ' + money(r0(t.orderToday)), ' *_Cumulative value_*: ' + money(r0(t.orderMonthBefore + t.orderToday)),
+      ...types.map(k => '_' + k + ' Value_: ' + money(r0(t.types[k]))),
+      '*Total Value*: ' + money(r0(t.orderToday)), '*_Cumulative Value_*: ' + money(r0(t.orderMonthBefore + t.orderToday)),
       '', '** *_PAYMENT REPORT_* **',
       ...modes.map(m => '_' + m + '_: ' + money(t.pay[m])),
       '*Total Value*: ' + money(t.payToday), '_*Cumulative Value*_: ' + money(t.payMonthBefore + t.payToday)].join('\n');
@@ -975,12 +976,36 @@
     const who = h('select', { class: 'inp' }, h('option', { value: '' }, 'Loading…'));
     const from = dateBox(today.slice(0, 8) + '01'), to = dateBox(today);
     from.max = to.max = today;
-    const genBtn = h('button', { class: 'btn big', onclick: generate }, 'Generate Summary');
+    const genBtn = h('button', { class: 'btn big', onclick: () => (kind.value === 'end' ? endDay() : generate()) }, 'Generate Summary');
     const result = h('div');
+    const kind = h('select', { class: 'inp' }, h('option', { value: 'general' }, 'General Summary'), h('option', { value: 'end' }, 'End Day Summary'));
+    const day1 = dateBox(today); day1.max = today;
+    const rangeBox = h('div', {}, h('div', { class: 'grid2' }, field('Start date', from), field('End date', to)),
+      h('p', { class: 'hint' }, 'Every day the DSO ended with Check Out is included, each on its own page, exactly like the day’s PDF.'));
+    const dayBox = h('div', { hidden: true }, field('Date', day1),
+      h('p', { class: 'hint' }, 'The Day End report of that day: the DSO’s orders and payments, and everyone’s month so far.'));
+    kind.addEventListener('change', () => { const e = kind.value === 'end'; rangeBox.hidden = e; dayBox.hidden = !e; result.replaceChildren(); say(msg, ''); });
     main.append(h('section', { class: 'card' }, h('h3', {}, 'Generate Summary'),
-      field('DSO', who), h('div', { class: 'grid2' }, field('Start date', from), field('End date', to)),
-      h('p', { class: 'hint' }, 'Every day the DSO ended with Check Out is included, each on its own page, exactly like the day’s PDF.'),
+      field('Summary', kind), field('DSO', who), rangeBox, dayBox,
       h('div', { class: 'submitbar' }, genBtn), msg), result);
+    async function endDay() {
+      if (busy) return;
+      const name = who.value, iso = day1.get();
+      result.replaceChildren();
+      if (!name) return say(msg, 'Select the DSO.', true);
+      if (!U.parseIso(iso)) return say(msg, 'Choose the date.', true);
+      busy = true; genBtn.disabled = true; say(msg, 'Getting ' + name + '’s day…');
+      try {
+        let r;
+        try { r = await authed('day_report', { dso: name, date: iso }); }
+        catch (e) { throw new Error(e.offline ? 'No internet – the End Day Summary needs a connection.' : e.message); }
+        say(msg, '');
+        const card = reportCard({ date: iso, beat: r.beat, report: dayReportText(r.name || name, { date: iso, beat: r.beat }, r) });
+        card.querySelector('h3').textContent = 'End Day Summary – ' + (r.name || name) + ', ' + dmyFull(iso);
+        result.append(card);
+      } catch (e) { say(msg, e.message, true); }
+      finally { busy = false; genBtn.disabled = false; }
+    }
     authed('day_summaries', {}).then(r => {
       const team = r.team || [];
       who.replaceChildren(h('option', { value: '' }, '---- Select ----'), ...team.map(n => h('option', { value: n }, n)));
