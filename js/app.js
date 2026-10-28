@@ -935,14 +935,28 @@
         h('div', { class: 'daystats' }, h('div', {}, h('small', {}, 'Check In'), h('b', {}, d.in || '–')), h('div', {}, h('small', {}, 'Check Out'), h('b', {}, d.out)), h('div', {}, h('small', {}, 'Entries'), h('b', {}, String(list.length)))),
         h('p', { class: 'locline' }, 'Check In – Location: ' + locText(dy.inLoc)), h('p', { class: 'locline' }, 'Check Out – Location: ' + locText(dy.outLoc)),
         h('div', { class: 'summary-actions' }, shareBtn, dlBtn), status),
-      reportCard(d),
       h('section', { class: 'card' }, h('h3', {}, 'Today on the map'), mapSvg(dy)),
       ...(list.length ? list.map((e, i) => h('section', { class: 'card entry' }, h('div', { class: 'row-between' }, h('h3', {}, 'Entry ' + (i + 1) + ':'), h('small', { class: 'hint' }, [e.kind, e.time].filter(Boolean).join(' · '))),
                         h('p', { class: 'locline' }, 'Location: ' + locText(e.loc)), h('div', { class: 'entrytext' }, e.text.replace(/[_*]/g, ''))))
                   : [h('section', { class: 'card' }, h('p', { class: 'hint' }, 'No visits or payments were logged today.'))]));
     let blob = null;
-    makeWorkPdf(S.profile.name, title, null, [dy], true).then(b => { blob = b; shareBtn.disabled = dlBtn.disabled = false; status.textContent = 'PDF ready: ' + fname; })
-      .catch(e => { status.textContent = e.message; status.className = 'hint bad'; });
+    (async () => {                                               // the Day End report goes into the PDF, right after the map
+      let note = '';
+      if (d.report) dy.report = d.report;
+      else {
+        status.textContent = 'Preparing the Day End report…';
+        const t0 = Date.now();
+        while (S.outbox.length && Date.now() - t0 < 10000) { await sync(false); await new Promise(r => setTimeout(r, 600)); }   // today's entries go up first
+        try {
+          if (S.outbox.length) throw new Error('waiting');
+          const r = await authed('day_report', { date: d.date });
+          d.report = dy.report = dayReportText(S.profile.name, d, r); save('day');
+        } catch (e) { dy.report = dayReportText(S.profile.name, d, localTotals(d)); note = '  (no connection – the Day End figures are from this phone; open this page again when online for the exact ones)'; }
+      }
+      status.textContent = 'Making the PDF…';
+      blob = await makeWorkPdf(S.profile.name, title, null, [dy], true);
+      shareBtn.disabled = dlBtn.disabled = false; status.textContent = 'PDF ready: ' + fname + note;
+    })().catch(e => { status.textContent = e.message; status.className = 'hint bad'; });
     function share() { if (blob) sharePdf(blob, fname, title); }
     function download() { if (blob) downloadBlob(blob, fname); }
     currentView = { tick() { if (day().date !== U.todayIso()) home(); } };
@@ -1129,6 +1143,24 @@
       });
       y = top - MH - 16;
     }
+    function drawReport(text) {                                   // the Day End report (the WhatsApp text, set out for print)
+      const rows = text.split('\n');
+      need(LH * 6);
+      page.drawLine({ start: { x: M, y }, end: { x: W - M, y }, thickness: 0.6, color: line }); y -= 14;
+      rows.forEach(raw => {
+        const c = raw.replace(/[*_]/g, '').replace(/\s+/g, ' ').trim();
+        if (!c) { y -= LH * 0.5; return; }
+        if (/^(DAY END|ORDER REPORT|PAYMENT REPORT)$/i.test(c)) { need(LH * 2); txt(c === 'DAY END' ? 'Day End Report' : c.charAt(0) + c.slice(1).toLowerCase().replace(/report$/, 'Report'), M, c === 'DAY END' ? 14 : 12, bold, navy); y -= c === 'DAY END' ? 22 : 18; return; }
+        const i = c.indexOf(':'), label = i < 0 ? c : c.slice(0, i + 1), val = i < 0 ? '' : c.slice(i + 1).trim();
+        need(LH);
+        const strong = /\*/.test(raw), cum = /cumulative/i.test(label);
+        const lf = strong ? bold : reg; txt(label, M + 12, FS, lf, strong ? navy : ink);
+        const vx = M + 12 + lf.widthOfTextAtSize(pdfSafe(label), FS) + 5;
+        if (val) txt(val, vx, FS, cum ? boldIt : strong ? bold : reg, cum ? green : ink);
+        y -= LH;
+      });
+      y -= 6; need(14); page.drawLine({ start: { x: M, y }, end: { x: W - M, y }, thickness: 1.2, color: navy }); y -= 16;
+    }
     const heading = (text, size) => { txt(text, M, size, bold, navy); y -= size + 10; };
     function drawDay(dy, size, map) {
       heading(name + '’s work on ' + dmyFull(dy.date), size);
@@ -1138,6 +1170,7 @@
       page.drawLine({ start: { x: M, y }, end: { x: W - M, y }, thickness: 1.2, color: navy }); y -= 16;
       if (dy.noEnd) { txt('This day was not ended with Check Out.', M, 10, bold, gold); y -= 20; }
       if (map) drawMap(dy);
+      if (dy.report) drawReport(dy.report);
       if (!dy.list.length) { txt('No visits or payments were logged on this day.', M, FS, reg, ink); y -= LH; }
       dy.list.forEach((e, i) => {
         need(LH * 5);
