@@ -701,6 +701,29 @@
     if (!S.ord || S.ord.date !== iso) S.ord = { date: iso, byName: {} };
     const k = norm(who); (S.ord.byName[k] || (S.ord.byName[k] = {}))[no] = value; save('ord');
   }
+  /* the whole team's orders / payments of a day (server at the last sync + what this phone sent since) – for the "Daily Cumulative" lines */
+  function allOrders(iso) {
+    const out = {}, add = src => { if (src && src.date === iso) Object.keys(src.byName || {}).forEach(w => Object.assign(out, src.byName[w])); };
+    add(S.snapshot && S.snapshot.ordersToday); add(S.ord);
+    return out;                                                   // {Order No.: value}
+  }
+  S.pay = store.get('pay', null);
+  function notePay(id, amount) {
+    const iso = U.todayIso();
+    if (!S.pay || S.pay.date !== iso) S.pay = { date: iso, byId: {} };
+    S.pay.byId[id] = amount; save('pay');
+  }
+  function allPays(iso) {
+    const out = {}, sv = S.snapshot && S.snapshot.paysToday;
+    if (sv && sv.date === iso) Object.assign(out, sv.byId || {});
+    if (S.pay && S.pay.date === iso) Object.assign(out, S.pay.byId || {});
+    return out;                                                   // {entry id: total}
+  }
+  const payCumulative = (ent, remote, entryId, total, ds) => {
+    if (remote) return (ent.dayPays || 0) - (ent.form.pays || []).reduce((a, p) => a + p.amount, 0) + total;
+    const o = allPays(ds); delete o[entryId];
+    return Object.values(o).reduce((a, v) => a + (+v || 0), 0) + total;
+  };
   function noteDayOrder(types) { if (!isFieldRole()) return; const d = day(); (d.orders || (d.orders = [])).push(types); save('day'); }
   function noteDayPay(pays) { if (!isFieldRole()) return; const d = day(); (d.pays || (d.pays = [])).push(pays.map(p => ({ mode: p.mode, amount: p.amount }))); save('day'); }
   /* "Day End Order Report" – the exact figures come from the server (they include anything the Head logged for this person);
@@ -881,46 +904,59 @@
     return pts;
   }
   /* lays the points out in a w x h box (equal scale on both axes, like a map) -> {pins:[{x,y,…}], ticksX, ticksY} – used for the PDF and the screen */
-  function mapLayout(pts, w, h, pad) {
+  function mapLayout(pts, w, h, pad, pin) {                     // pin: {r: head radius, s: needle length}
     if (!pts.length) return null;
     const lat0 = pts.reduce((a, p) => a + p.lat, 0) / pts.length, k = Math.cos(lat0 * Math.PI / 180);
     let x0 = Math.min(...pts.map(p => p.lon * k)), x1 = Math.max(...pts.map(p => p.lon * k)), y0 = Math.min(...pts.map(p => p.lat)), y1 = Math.max(...pts.map(p => p.lat));
     const min = 0.002;                                            // at least ~200 m across, so one spot does not fill the page
     if (x1 - x0 < min) { const c = (x0 + x1) / 2; x0 = c - min / 2; x1 = c + min / 2; }
     if (y1 - y0 < min) { const c = (y0 + y1) / 2; y0 = c - min / 2; y1 = c + min / 2; }
-    const iw = w - pad.l - pad.r, ih = h - pad.t - pad.b, inset = 26, sc = Math.min((iw - 2 * inset) / (x1 - x0), (ih - 2 * inset) / (y1 - y0));   // pins stay off the frame
+    pin = pin || { r: 9, s: 24 };
+    const iw = w - pad.l - pad.r, ih = h - pad.t - pad.b, inset = pin.s + pin.r + 6, sc = Math.min((iw - 2 * inset) / (x1 - x0), (ih - 2 * inset) / (y1 - y0));   // pins stay off the frame
     const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
     const X = lonk => pad.l + iw / 2 + (lonk - cx) * sc, Y = lat => pad.t + ih / 2 - (lat - cy) * sc;   // y grows downwards (screen)
     const pins = pts.map(p => Object.assign({}, p, { x: X(p.lon * k), y: Y(p.lat) }));
-    // labels: to the right of the pin (left near the right edge), pushed down when they would overlap an earlier label
-    const placed = [];
+    // pin heads: straight above the spot; when that would cover another head, the needle leans left / right or gets longer
+    const heads = [], R2 = pin.r * 2 + 2, inside = (x, y) => x - pin.r >= pad.l + 1 && x + pin.r <= pad.l + iw - 1 && y - pin.r >= pad.t + 1 && y + pin.r <= pad.t + ih - 1;
+    const angles = [0, -30, 30, -55, 55, -80, 80, -105, 105, -130, 130];
     pins.forEach(p => {
-      const lw = 112, lh = 24; let lx = p.x + 9 + lw > pad.l + iw - 2 ? p.x - 9 - lw : p.x + 9, ly = p.y - lh / 2;
-      for (let t = 0; t < 40 && placed.some(q => lx < q.x + q.w && lx + lw > q.x && ly < q.y + q.h && ly + lh > q.y); t++) ly += lh + 2;
-      ly = Math.max(pad.t + 2, Math.min(pad.t + ih - lh - 2, ly));
-      lx = Math.max(pad.l + 2, lx);
-      placed.push({ x: lx, y: ly, w: lw, h: lh }); p.lx = lx; p.ly = ly; p.lw = lw; p.lh = lh;
+      let best = null;
+      for (const len of [pin.s, pin.s * 1.8, pin.s * 2.6, pin.s * 3.4]) {
+        for (const a of angles) {
+          const hx = p.x + Math.sin(a * Math.PI / 180) * len, hy = p.y - Math.cos(a * Math.PI / 180) * len;
+          if (!inside(hx, hy)) continue;
+          if (heads.some(q => Math.hypot(q.x - hx, q.y - hy) < R2)) continue;
+          best = { x: hx, y: hy }; break;
+        }
+        if (best) break;
+      }
+      if (!best) best = { x: p.x, y: p.y - pin.s };
+      heads.push(best); p.hx = best.x; p.hy = best.y;
     });
     const ticks = (a, b, n) => Array.from({ length: n + 1 }, (_, i) => a + (b - a) * i / n);
     const lonL = (pad.l - pad.l - iw / 2) / sc + cx, lonR = (iw / 2) / sc + cx, latT = cy + (ih / 2) / sc, latB = cy - (ih / 2) / sc;
     return { pins, pad, iw, ih, ticksX: ticks(lonL, lonR, 4).map(v => ({ x: X(v), v: v / k })), ticksY: ticks(latB, latT, 4).map(v => ({ y: Y(v), v })) };
   }
-  const PIN = { in: '#0F7A55', entry: '#16306F', out: '#B42318' };
+  const PIN = { in: '#0F7A55', entry: '#111827', out: '#B42318' };     // Check In green, entries black, Check Out red
+  const pinText = p => (p.kind === 'entry' ? p.label.replace(/^Entry\s*/, '') : p.kind === 'in' ? 'In' : 'Out');
   const fmtLL = p => p.lat.toFixed(5) + ', ' + p.lon.toFixed(5) + (p.approx ? ' (approx)' : '');
+  const mapKey = () => h('div', { class: 'mapkey' }, h('span', {}, h('i', { class: 'k in' }, 'In'), 'Check In'), h('span', {}, h('i', { class: 'k entry' }, '1'), 'Entry number'), h('span', {}, h('i', { class: 'k out' }, 'Out'), 'Check Out'));
   function mapSvg(dy) {                                          // the same picture on the screen
-    const pts = dayPoints(dy), W = 400, H = 380, L = mapLayout(pts, W, H, { l: 70, r: 22, t: 10, b: 34 });
+    const pts = dayPoints(dy), W = 400, H = 360, L = mapLayout(pts, W, H, { l: 6, r: 6, t: 6, b: 6 }, { r: 13, s: 28 });
     const box = h('div', { class: 'daymap' });
     if (!L) { box.append(h('p', { class: 'hint' }, 'No locations were recorded today, so there is no map.')); return box; }
     const e = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
     let svg = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Map of today's points"><rect x="${L.pad.l}" y="${L.pad.t}" width="${L.iw}" height="${L.ih}" fill="#F4F7FC" stroke="#CBD5E1"/>`;
-    L.ticksX.forEach(t => { svg += `<line x1="${t.x}" y1="${L.pad.t}" x2="${t.x}" y2="${L.pad.t + L.ih}" stroke="#E2E8F0"/><text x="${t.x}" y="${H - 14}" font-size="11" text-anchor="middle" fill="#64748B">${t.v.toFixed(4)}</text>`; });
-    L.ticksY.forEach(t => { svg += `<line x1="${L.pad.l}" y1="${t.y}" x2="${L.pad.l + L.iw}" y2="${t.y}" stroke="#E2E8F0"/><text x="${L.pad.l - 6}" y="${t.y + 4}" font-size="11" text-anchor="end" fill="#64748B">${t.v.toFixed(4)}</text>`; });
-    svg += `<text x="${L.pad.l + L.iw / 2}" y="${H - 2}" font-size="11" text-anchor="middle" fill="#64748B">Longitude</text><text x="9" y="${L.pad.t + L.ih / 2}" font-size="11" text-anchor="middle" fill="#64748B" transform="rotate(-90 9 ${L.pad.t + L.ih / 2})">Latitude</text>`;
+    L.ticksX.forEach(t => { svg += `<line x1="${t.x}" y1="${L.pad.t}" x2="${t.x}" y2="${L.pad.t + L.ih}" stroke="#E2E8F0"/>`; });
+    L.ticksY.forEach(t => { svg += `<line x1="${L.pad.l}" y1="${t.y}" x2="${L.pad.l + L.iw}" y2="${t.y}" stroke="#E2E8F0"/>`; });
     if (L.pins.length > 1) svg += `<polyline points="${L.pins.map(p => p.x + ',' + p.y).join(' ')}" fill="none" stroke="#94A3B8" stroke-width="1.5" stroke-dasharray="5 4"/>`;
-    L.pins.forEach(p => { svg += `<line x1="${p.x}" y1="${p.y}" x2="${p.lx < p.x ? p.lx + p.lw : p.lx}" y2="${p.ly + p.lh / 2}" stroke="#CBD5E1"/>`; });
-    L.pins.forEach(p => { svg += `<circle cx="${p.x}" cy="${p.y}" r="6" fill="${PIN[p.kind]}" stroke="#fff" stroke-width="2"/>`; });
-    L.pins.forEach(p => { svg += `<rect x="${p.lx}" y="${p.ly}" width="${p.lw}" height="${p.lh}" rx="4" fill="#fff" fill-opacity=".92" stroke="${PIN[p.kind]}" stroke-width=".8"/><text x="${p.lx + 5}" y="${p.ly + 10}" font-size="10" font-weight="700" fill="${PIN[p.kind]}">${e(p.label)}</text><text x="${p.lx + 5}" y="${p.ly + 20}" font-size="9" fill="#334155">${e(fmtLL(p))}</text>`; });
+    L.pins.forEach(p => {                                         // a needle from the spot to its round head
+      const dx = p.hx - p.x, dy = p.hy - p.y, n = Math.hypot(dx, dy) || 1, ox = -dy / n * 1.6, oy = dx / n * 1.6;
+      svg += `<polygon points="${p.x},${p.y} ${p.hx + ox},${p.hy + oy} ${p.hx - ox},${p.hy - oy}" fill="#475569"/>`;
+    });
+    L.pins.forEach(p => { const t = pinText(p); svg += `<circle cx="${p.hx}" cy="${p.hy}" r="13" fill="${PIN[p.kind]}" stroke="#fff" stroke-width="1.5"/><text x="${p.hx}" y="${p.hy + 4}" font-size="${t.length > 2 ? 10 : 11.5}" font-weight="700" text-anchor="middle" fill="#fff">${e(t)}</text>`; });
     box.innerHTML = svg + '</svg>';
+    box.append(mapKey());
     return box;
   }
 
@@ -1121,29 +1157,38 @@
     }
     const txt = (t, x, size, font, color) => page.drawText(pdfSafe(t), { x, y: y - size, size, font, color });
     function drawMap(dy) {                                         // the day's points as a graph: pins + "Check In", "Entry 1" … + lat, lon
-      const pts = dayPoints(dy), MW = W - 2 * M, MH = 290;
+      const pts = dayPoints(dy), MW = W - 2 * M, MH = 280;
       need(MH + 30);
       txt('Today on the map', M, 12, bold, navy); y -= 18;
-      const top = y, L = mapLayout(pts, MW, MH, { l: 58, r: 10, t: 10, b: 30 });
+      const top = y, L = mapLayout(pts, MW, MH, { l: 6, r: 6, t: 6, b: 6 }, { r: 10.5, s: 24 });
       const P = (x, yy) => ({ x: M + x, y: top - yy });            // layout (y down) -> PDF (y up)
       page.drawRectangle({ x: M, y: top - MH, width: MW, height: MH, borderColor: line, borderWidth: 0.8 });
       if (!L) { txt('No locations were recorded on this day.', M + 12, 10, reg, muted); y = top - MH - 14; return; }
       const a = P(L.pad.l, L.pad.t);
       page.drawRectangle({ x: a.x, y: a.y - L.ih, width: L.iw, height: L.ih, color: rgb(0.957, 0.969, 0.988), borderColor: rgb(0.8, 0.84, 0.88), borderWidth: 0.6 });
-      L.ticksX.forEach(t => { const p = P(t.x, 0); page.drawLine({ start: { x: p.x, y: a.y }, end: { x: p.x, y: a.y - L.ih }, thickness: 0.4, color: line }); const s = t.v.toFixed(4); page.drawText(s, { x: p.x - reg.widthOfTextAtSize(s, 7) / 2, y: a.y - L.ih - 10, size: 7, font: reg, color: muted }); });
-      L.ticksY.forEach(t => { const p = P(0, t.y); page.drawLine({ start: { x: a.x, y: p.y }, end: { x: a.x + L.iw, y: p.y }, thickness: 0.4, color: line }); const s = t.v.toFixed(4); page.drawText(s, { x: a.x - 4 - reg.widthOfTextAtSize(s, 7), y: p.y - 2.5, size: 7, font: reg, color: muted }); });
-      page.drawText('Longitude', { x: a.x + L.iw / 2 - 18, y: top - MH + 4, size: 7.5, font: reg, color: muted });
-      page.drawText('Latitude', { x: M + 9, y: a.y - L.ih / 2 - 14, size: 7.5, font: reg, color: muted, rotate: { type: 'degrees', angle: 90 } });
+      L.ticksX.forEach(t => { const p = P(t.x, 0); page.drawLine({ start: { x: p.x, y: a.y }, end: { x: p.x, y: a.y - L.ih }, thickness: 0.4, color: line }); });
+      L.ticksY.forEach(t => { const p = P(0, t.y); page.drawLine({ start: { x: a.x, y: p.y }, end: { x: a.x + L.iw, y: p.y }, thickness: 0.4, color: line }); });
       for (let i = 1; i < L.pins.length; i++) { const p0 = P(L.pins[i - 1].x, L.pins[i - 1].y), p1 = P(L.pins[i].x, L.pins[i].y); page.drawLine({ start: p0, end: p1, thickness: 1, color: rgb(0.58, 0.64, 0.72), dashArray: [4, 3] }); }
-      L.pins.forEach(p => { const c = P(p.x, p.y), q = P(p.lx < p.x ? p.lx + p.lw : p.lx, p.ly + p.lh / 2); page.drawLine({ start: c, end: q, thickness: 0.5, color: rgb(0.8, 0.84, 0.88) }); });
-      L.pins.forEach(p => { const c = P(p.x, p.y); page.drawCircle({ x: c.x, y: c.y, size: 4.5, color: hex(PIN[p.kind]), borderColor: rgb(1, 1, 1), borderWidth: 1.5 }); });
-      L.pins.forEach(p => {
-        const b = P(p.lx, p.ly);
-        page.drawRectangle({ x: b.x, y: b.y - p.lh, width: p.lw, height: p.lh, color: rgb(1, 1, 1), opacity: 0.92, borderColor: hex(PIN[p.kind]), borderWidth: 0.6 });
-        page.drawText(pdfSafe(p.label), { x: b.x + 4, y: b.y - 9.5, size: 8, font: bold, color: hex(PIN[p.kind]) });
-        page.drawText(pdfSafe(fmtLL(p)), { x: b.x + 4, y: b.y - 19.5, size: 7, font: reg, color: ink });
+      const needle = rgb(0.28, 0.33, 0.41);
+      L.pins.forEach(p => {                                       // the needle: pointed at the spot, wider at the head
+        const c = P(p.x, p.y), hd = P(p.hx, p.hy), dx = hd.x - c.x, dy = hd.y - c.y, n = Math.hypot(dx, dy) || 1, ox = -dy / n * 1.3, oy = dx / n * 1.3;
+        page.drawSvgPath(`M ${c.x} ${-c.y} L ${hd.x + ox} ${-(hd.y + oy)} L ${hd.x - ox} ${-(hd.y - oy)} Z`, { x: 0, y: 0, color: needle });
       });
-      y = top - MH - 16;
+      L.pins.forEach(p => {
+        const hd = P(p.hx, p.hy), t = pinText(p);
+        const fs = t.length > 2 ? 7.5 : 8.5;
+        page.drawCircle({ x: hd.x, y: hd.y, size: 10.5, color: hex(PIN[p.kind]), borderColor: rgb(1, 1, 1), borderWidth: 1.2 });
+        page.drawText(t, { x: hd.x - bold.widthOfTextAtSize(t, fs) / 2, y: hd.y - fs * 0.36, size: fs, font: bold, color: rgb(1, 1, 1) });
+      });
+      y = top - MH - 14;
+      const key = [['in', 'Check In'], ['entry', 'Entry number'], ['out', 'Check Out']]; let kx = M;     // the key under the map
+      key.forEach(([k, t]) => {
+        const lt = k === 'in' ? 'In' : k === 'out' ? 'Out' : '1', ks = lt.length > 2 ? 5.5 : 6.5;
+        page.drawCircle({ x: kx + 8, y: y - 6, size: 8, color: hex(PIN[k]) });
+        page.drawText(lt, { x: kx + 8 - bold.widthOfTextAtSize(lt, ks) / 2, y: y - 6 - ks * 0.36, size: ks, font: bold, color: rgb(1, 1, 1) });
+        page.drawText(t, { x: kx + 20, y: y - 9.5, size: 9, font: reg, color: muted }); kx += 20 + reg.widthOfTextAtSize(t, 9) + 22;
+      });
+      y -= 24;
     }
     function drawReport(text) {                                   // the Day End report (the WhatsApp text, set out for print)
       const rows = text.split('\n');
@@ -1197,7 +1242,7 @@
         need(LH);
         txt(dmyFull(dy.date) + '   -   Check In: ' + (dy.in || '-') + '   Check Out: ' + (dy.out || '-') + '   Entries: ' + dy.list.length + (dy.noEnd ? '   (not ended)' : ''), M, FS, reg, ink); y -= LH;
       });
-      days.forEach(dy => { newPage(); drawDay(dy, 18, false); });   // every date on its own page(s)
+      days.forEach(dy => { newPage(); drawDay(dy, 18, true); });    // every date on its own page(s), with its map
     }
     const pages = doc.getPages(), foot = pdfSafe('ProMandi  -  ' + title);
     pages.forEach((p, i) => {
@@ -1227,7 +1272,7 @@
     Loc.refresh();
     const msg = msgBox(), isHead = S.profile.position === 'Head of Operations';
     const by = isHead ? loggedByBox(() => { market.set(''); counter.set(''); counterChanged(); }) : null;
-    if (isHead) sync(true);                                       // fresh "today's orders" of everyone: right Order No. and Daily Cumulative for the "Logged by" person
+    if (mode !== 'view') sync(true);                              // fresh orders / payments of the whole team: right Order No. and Daily Cumulative
     const dsoName = () => (isHead ? by.get() : (S.profile.dso || S.profile.name));
     let outBeat = false, calBeat = '';
     const date = { get: () => (remote ? ent.date : U.todayIso()) };   // no Date box: today's (an entry opened by the Head: its own day)
@@ -1289,6 +1334,7 @@
       const job = tryRun(build, msg); if (!job) return;
       submitJob(job);
       if (job.order && !remote) noteOrder(job.order.who, job.order.no, job.order.value);
+      if (!remote && (job.payTotal || ent)) notePay(job.entry.id, job.payTotal || 0);
       if (ent && !remote && ent.orderNo && (!job.order || job.order.no !== ent.orderNo)) noteOrder(dsoName(), ent.orderNo, 0);   // the order was removed in the edit
       if (remote) { remoteSaved(ent, job); return; }
       if (ent) { updateEntry(ent, job); entriesView(); submitted(() => showSummary(job.summary)); return; }
@@ -1323,7 +1369,7 @@
         const total = lines.reduce((a, l) => a + l.qty * l.rate, 0);
         const keep = ent && ent.orderNo && (!remote || ent.orderNo.toLowerCase().indexOf('-' + dso.toLowerCase() + '-') > 0);
         ono = keep ? ent.orderNo : remote ? nextNo(dso, ds, ent.dayOrders) : nextOrderNo(dso, ds); orderTotal = roundRupee(total);      // an edited order keeps its Order No.
-        const others = remote ? (norm(dso) === norm(ent.form.by) ? Object.assign({}, ent.dayOrders || {}) : {}) : ordersOf(dso, ds); delete others[ono];
+        const others = remote ? Object.assign({}, ent.dayOrders || {}) : allOrders(ds); delete others[ono]; if (ent && ent.orderNo) delete others[ent.orderNo];   // everyone's orders of the day
         cumulative = Object.values(others).reduce((a, v) => a + (+v || 0), 0) + orderTotal;
         const nd = TERM_DAYS[tm] ? U.addDays(ds, TERM_DAYS[tm]) : '';
         const wk = nd ? (model.beatForDate(nd) || U.weekday(nd)) : '';
@@ -1354,12 +1400,13 @@
         });
         sum.push('*Order Value:* ' + money(orderTotal), '_*Daily Cumulative:*_ ' + money(cumulative), 'Payment Terms: ' + tm);
       }
-      if (pays.length) sum.push('', '_*Payments:*_', ...payText(pays));
+      const payTot = pays.reduce((a, p) => a + p.amount, 0);
+      if (pays.length) sum.push('', '_*Payments:*_', ...payText(pays), '_*Daily Cumulative:*_ ' + money(plain(payCumulative(ent, remote, entryId, payTot, ds))));
       const types = {}; lines.forEach(l => { const t = sval(l.type) || 'Other'; types[t] = (types[t] || 0) + l.qty * l.rate; });
       const cat = lines.length && pays.length ? 'Order and Payment' : lines.length ? 'Order on Visit' : pays.length ? 'Payment on Visit' : 'Visit only';
       const entry = { id: entryId, cat, market: mk, counter: name, orderNo: ono, types, pays, by: isHead ? dso : '',
         form: { by: isHead ? dso : '', outBeat, market: mk, counter: name, remarks: rem, cooler: cooler.value, lines: lines.map(l => ({ type: l.type, item: l.item, sub: l.sub, colour: l.colour, qty: l.qty, rate: l.rate })), terms: tm, pays } };
-      return { id: U.uuid(), label, summary: sum.join('\n'), parts, entry, loc: visit.location || '', pays: pays.length ? pays : null, order: ono ? { who: dso, no: ono, value: orderTotal, types } : null,
+      return { id: U.uuid(), label, summary: sum.join('\n'), parts, entry, loc: visit.location || '', payTotal: payTot, pays: pays.length ? pays : null, order: ono ? { who: dso, no: ono, value: orderTotal, types } : null,
         overlay: { visit, orders, newCounter: existing ? null : { market: mk, name, code, mobile, type: ctype, gstin }, newMarket: newMarket ? { beat, market: mk } : null, fill: fill && Object.keys(fill).length ? Object.assign({ code, replace }, fill) : null } };
     }
   }
@@ -1374,6 +1421,7 @@
     Loc.refresh();
     const msg = msgBox(), isHead = S.profile.position === 'Head of Operations';
     const by = isHead ? loggedByBox() : null;
+    if (mode !== 'view') sync(true);                              // fresh payments of the whole team for the Daily Cumulative
     const date = { get: () => (remote ? ent.date : U.todayIso()) };
     const info = h('div', { class: 'hint' });
     const market = new Combo({ placeholder: 'Market', strict: true, values: () => model.allMarkets(), onChange: () => { counter.set(''); upd(); } });
@@ -1413,15 +1461,17 @@
           const row = { date: ds, 'entry id': entryId, market: mk, 'counter name': c.name, 'counter code': c.code, total: plain(total) };
           if (isHead) { row['received by'] = by.get(); row['logged by'] = by.get(); }
           pays.forEach(p => { row[p.mode.toLowerCase()] = plain(p.amount); });
-          const summary = ['_*Details:*_', 'Date: ' + dmyShort(ds), 'Market: ' + mk, 'Counter: ' + c.name, '', '_*Payments:*_', ...payText(pays), '*Total:* ' + money(total)].join('\n');
+          const summary = ['_*Details:*_', 'Date: ' + dmyShort(ds), 'Market: ' + mk, 'Counter: ' + c.name, '', '_*Payments:*_', ...payText(pays), '*Total:* ' + money(total),
+                           '_*Daily Cumulative:*_ ' + money(plain(payCumulative(ent, remote, entryId, total, ds)))].join('\n');
           const parts = ent ? [{ kind: 'replace_entry', id: entryId, date: ds }] : [];
           parts.push({ sheet: 'Payments Received', rows: [row] });
           const pb = isHead ? by.get() : '';
           const entry = { id: entryId, cat: 'Payment without Visit', market: mk, counter: c.name, pays, types: {}, by: pb, form: { by: pb, market: mk, counter: c.name, pays } };
-          return { id: U.uuid(), label: c.name + '  |  payment ₹' + roundRupee(total).toLocaleString('en-IN'), summary, parts, entry, overlay: null, pays };
+          return { id: U.uuid(), label: c.name + '  |  payment ₹' + roundRupee(total).toLocaleString('en-IN'), summary, parts, entry, overlay: null, pays, payTotal: total };
         }, msg);
         if (!job) return;
         submitJob(job);
+        if (!remote) notePay(job.entry.id, job.payTotal || 0);
         if (remote) { remoteSaved(ent, job); return; }
         if (ent) { updateEntry(ent, job); entriesView(); submitted(() => showSummary(job.summary)); return; }
         addEntry('Payment', job.summary, Loc.get(), job.entry);
@@ -1667,7 +1717,8 @@
         const e = Object.assign({}, HE.list[i], job.entry, { remote: true, edited: nowTime() });
         if (job.order) { e.dayOrders = Object.assign({}, e.dayOrders || {}); if (ent.orderNo) delete e.dayOrders[ent.orderNo]; e.dayOrders[job.order.no] = job.order.value; }
         HE.list[i] = e;
-        HE.list.forEach(x => { if (x.kind !== 'Invoice') x.dayOrders = HE.list[i].dayOrders || x.dayOrders; });
+        const dp = (ent.dayPays || 0) - (ent.form.pays || []).reduce((a, p) => a + p.amount, 0) + (job.payTotal || 0);
+        HE.list.forEach(x => { if (x.kind !== 'Invoice') { x.dayOrders = HE.list[i].dayOrders || x.dayOrders; x.dayPays = dp; } });
       }
     }
     headEntriesView(); submitted(() => showSummary(job.summary));
@@ -1739,7 +1790,7 @@
         let r;
         try { r = await authed('entries_of', { name, date: iso }); }
         catch (e) { throw new Error(e.offline ? 'No internet – the entries need a connection.' : e.message); }
-        HE.list = (r.entries || []).map(e => Object.assign(e, { remote: true, date: iso, dayOrders: r.dayOrders || {} }));
+        HE.list = (r.entries || []).map(e => Object.assign(e, { remote: true, date: iso, dayOrders: r.dayOrders || {}, dayPays: r.dayPays || 0 }));
         say(msg, ''); draw();
       } catch (e) { say(msg, e.message, true); }
       finally { busy = false; showBtn.disabled = false; }

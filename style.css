@@ -240,3 +240,8 @@ table.pnl th.num{text-align:right}table.pnl td.neg{color:var(--red)}
 .pnlerr div+div{margin-top:4px}
 table.pnl{font-size:11px}table.pnl th{font-size:10.5px;padding:5px 3px}table.pnl td{padding:6px 3px}
 table.pnl td:first-child{min-width:44px}
+
+.mapkey{display:flex;flex-wrap:wrap;gap:6px 16px;margin-top:8px;font-size:12.5px;color:#475569}
+.mapkey span{display:inline-flex;align-items:center;gap:6px}
+.mapkey .k{width:24px;height:24px;border-radius:50%;display:inline-grid;place-items:center;font:700 9.5px/1 system-ui,sans-serif;color:#fff;font-style:normal}
+.mapkey .k.in{background:#0F7A55}.mapkey .k.entry{background:#111827}.mapkey .k.out{background:#B42318}
