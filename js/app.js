@@ -942,7 +942,7 @@
   const fmtLL = p => p.lat.toFixed(5) + ', ' + p.lon.toFixed(5) + (p.approx ? ' (approx)' : '');
   const mapKey = () => h('div', { class: 'mapkey' }, h('span', {}, h('i', { class: 'k in' }, 'In'), 'Check In'), h('span', {}, h('i', { class: 'k entry' }, '1'), 'Entry number'), h('span', {}, h('i', { class: 'k out' }, 'Out'), 'Check Out'));
   function mapSvg(dy) {                                          // the same picture on the screen
-    const pts = dayPoints(dy), W = 400, H = 360, L = mapLayout(pts, W, H, { l: 6, r: 6, t: 6, b: 6 }, { r: 13, s: 28 });
+    const pts = dayPoints(dy), W = 400, H = 360, L = mapLayout(pts, W, H, { l: 6, r: 6, t: 6, b: 6 }, { r: 5.2, s: 28 });
     const box = h('div', { class: 'daymap' });
     if (!L) { box.append(h('p', { class: 'hint' }, 'No locations were recorded today, so there is no map.')); return box; }
     const e = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
@@ -954,7 +954,7 @@
       const dx = p.hx - p.x, dy = p.hy - p.y, n = Math.hypot(dx, dy) || 1, ox = -dy / n * 1.6, oy = dx / n * 1.6;
       svg += `<polygon points="${p.x},${p.y} ${p.hx + ox},${p.hy + oy} ${p.hx - ox},${p.hy - oy}" fill="#475569"/>`;
     });
-    L.pins.forEach(p => { const t = pinText(p); svg += `<circle cx="${p.hx}" cy="${p.hy}" r="13" fill="${PIN[p.kind]}" stroke="#fff" stroke-width="1.5"/><text x="${p.hx}" y="${p.hy + 4}" font-size="${t.length > 2 ? 10 : 11.5}" font-weight="700" text-anchor="middle" fill="#fff">${e(t)}</text>`; });
+    L.pins.forEach(p => { const t = pinText(p); svg += `<circle cx="${p.hx}" cy="${p.hy}" r="5.2" fill="${PIN[p.kind]}" stroke="#fff" stroke-width=".7"/><text x="${p.hx}" y="${p.hy + 1.6}" font-size="${t.length > 2 ? 4 : 4.6}" font-weight="700" text-anchor="middle" fill="#fff">${e(t)}</text>`; });
     box.innerHTML = svg + '</svg>';
     box.append(mapKey());
     return box;
@@ -1160,7 +1160,7 @@
       const pts = dayPoints(dy), MW = W - 2 * M, MH = 280;
       need(MH + 30);
       txt('Today on the map', M, 12, bold, navy); y -= 18;
-      const top = y, L = mapLayout(pts, MW, MH, { l: 6, r: 6, t: 6, b: 6 }, { r: 10.5, s: 24 });
+      const top = y, L = mapLayout(pts, MW, MH, { l: 6, r: 6, t: 6, b: 6 }, { r: 4.2, s: 24 });
       const P = (x, yy) => ({ x: M + x, y: top - yy });            // layout (y down) -> PDF (y up)
       page.drawRectangle({ x: M, y: top - MH, width: MW, height: MH, borderColor: line, borderWidth: 0.8 });
       if (!L) { txt('No locations were recorded on this day.', M + 12, 10, reg, muted); y = top - MH - 14; return; }
@@ -1176,8 +1176,8 @@
       });
       L.pins.forEach(p => {
         const hd = P(p.hx, p.hy), t = pinText(p);
-        const fs = t.length > 2 ? 7.5 : 8.5;
-        page.drawCircle({ x: hd.x, y: hd.y, size: 10.5, color: hex(PIN[p.kind]), borderColor: rgb(1, 1, 1), borderWidth: 1.2 });
+        const fs = t.length > 2 ? 3 : 3.4;
+        page.drawCircle({ x: hd.x, y: hd.y, size: 4.2, color: hex(PIN[p.kind]), borderColor: rgb(1, 1, 1), borderWidth: 0.5 });
         page.drawText(t, { x: hd.x - bold.widthOfTextAtSize(t, fs) / 2, y: hd.y - fs * 0.36, size: fs, font: bold, color: rgb(1, 1, 1) });
       });
       y = top - MH - 14;
@@ -1522,8 +1522,9 @@
     const date = dateBox(U.todayIso(), () => invChanged());
     const serial = h('input', { class: 'inp', inputmode: 'numeric', placeholder: 'Serial No.', autocomplete: 'off' });
     const invNo = h('input', { class: 'inp', readonly: true, placeholder: 'Invoice Number' });
-    const market = new Combo({ placeholder: 'Market', strict: true, values: () => model.everyMarket(), onChange: () => { counter.set(''); counterChanged(); } });
-    const counter = new Combo({ placeholder: 'Counter', strict: true, values: () => model.countersFor(market.get()), onChange: () => counterChanged() });
+    // a new market or counter can be typed in: it is saved with the invoice and shows up in the lists from then on
+    const market = new Combo({ placeholder: 'Market (pick or type a new one)', values: () => model.everyMarket(), onInput: () => counterChanged(), onChange: () => { counter.set(''); counterChanged(); } });
+    const counter = new Combo({ placeholder: 'Counter (pick or type a new one)', values: () => model.countersFor(market.get()), onInput: () => counterChanged(), onChange: () => counterChanged() });
     const cd = new CounterDetails(model, false);
     const code = () => { const c = model.findCounter(market.get(), counter.get()); return c ? c.code : ''; };
     const area = new ProductRows({ model, rateFn: (c, k) => model.rateFor(c, k), codeFn: code, emptyText: 'No product added. Tap “＋ Add Product” to start the invoice.', totalLabel: 'Total Invoice Amount' });
@@ -1541,20 +1542,22 @@
           if (!/^\d+$/.test(sr) || +sr === 0) throw new Error('Enter the Serial Number (digits only).');
           const ino = U.invoiceNo(sr, ds);
           if (Object.keys(model.invoices).some(k => k.toLowerCase() === ino.toLowerCase())) throw new Error(`Invoice ${ino} already exists in the Invoice Record.\nCheck the Serial Number (use Edit Previous Invoice to change an existing invoice).`);
-          const mk = clean(market.get()).toUpperCase();
-          if (!mk) throw new Error('Select the Market.');
-          const c = model.findCounter(mk, counter.get());
-          if (!c) throw new Error('Select the Counter from the list (it must be a counter of this market).');
+          const mk = clean(market.get()).toUpperCase(), cname = clean(counter.get());
+          if (!mk) throw new Error('Enter the Market.');
+          if (!cname) throw new Error('Enter the Counter.');
+          const known = model.findCounter(mk, cname);
           const lines = area.lines();
           if (!lines.length) throw new Error('Add at least one product.');
-          const { mobile, gstin, fill, replace } = cd.resolve(c);
+          const { mobile, gstin, fill, replace } = cd.resolve(known);
+          const c = known || { name: cname, code: U.counterCode(mk, cname) };      // a new counter
           const billing = roundRupee(lines.reduce((a, l) => a + l.qty * l.rate, 0));
           const rows = lines.map(l => invoiceRow(ds, ino, '', mk, c.name, c.code, mobile, gstin, billing, l));
           const data = { date: ds, orderNo: '', market: mk, counterName: c.name, counterCode: c.code, mobile, gstin, lines: lines.map(l => ({ type: l.type, item: l.item, sub: l.sub, colour: l.colour, qty: l.qty, price: plain(l.rate) })) };
           const parts = []; const hasFill = fill && Object.keys(fill).length;
           if (hasFill) parts.push({ kind: 'fill', code: c.code, values: fill, replace });
           parts.push({ sheet: 'Invoice Record', rows });
-          return { id: U.uuid(), label: `${ino}  |  ${c.name}  |  ₹${billing.toLocaleString('en-IN')}`, parts, overlay: { invoice: { no: ino, data }, fill: hasFill ? Object.assign({ code: c.code, replace }, fill) : null } };
+          return { id: U.uuid(), label: `${ino}  |  ${c.name}  |  ₹${billing.toLocaleString('en-IN')}`, parts,
+            overlay: { invoice: { no: ino, data }, newCounter: known ? null : { market: mk, name: c.name, code: c.code, mobile, gstin }, fill: hasFill ? Object.assign({ code: c.code, replace }, fill) : null } };
         }, msg);
         if (!job) return;
         submitJob(job); say(msg, ''); submitted(); clear();
@@ -1651,13 +1654,24 @@
     const note = h('div', { class: 'hint' }, 'Type the Serial Number of the invoice.');
     const detail = h('div', { hidden: true });
     const ro = {}; const detailGrid = h('div', { class: 'grid2' });
-    [['date', 'Date'], ['market', 'Market'], ['counter', 'Counter'], ['mobile', 'Mobile No.'], ['gstin', 'GSTIN/PAN']].forEach(([k, t]) => { ro[k] = h('input', { class: 'inp', readonly: true }); detailGrid.append(field(t, ro[k])); });
+    [['date', 'Date']].forEach(([k, t]) => { ro[k] = h('input', { class: 'inp', readonly: true }); detailGrid.append(field(t, ro[k])); });
+    const emk = new Combo({ placeholder: 'Market (pick or type a new one)', values: () => model.everyMarket(), onChange: () => { ecn.set(''); showDet(); } });
+    const ecn = new Combo({ placeholder: 'Counter (pick or type a new one)', values: () => model.countersFor(emk.get()), onInput: () => showDet(), onChange: () => showDet() });
+    detailGrid.append(field('Market', emk.el), field('Counter', ecn.el));
+    [['mobile', 'Mobile No.'], ['gstin', 'GSTIN/PAN']].forEach(([k, t]) => { ro[k] = h('input', { class: 'inp', readonly: true }); detailGrid.append(field(t, ro[k])); });
+    function picked() {                                         // the counter now chosen: the invoice's own, another one on file, or a new one
+      const mk = clean(emk.get()).toUpperCase(), cname = clean(ecn.get());
+      if (hdr && mk === sval(hdr.market).toUpperCase() && norm(cname) === norm(hdr.counterName)) return { mk, name: hdr.counterName, code: hdr.counterCode, mobile: hdr.mobile, gstin: hdr.gstin, same: true };
+      const c = model.findCounter(mk, cname);
+      return c ? { mk, name: c.name, code: c.code, mobile: c.mobile || '', gstin: c.gstin || '' } : { mk, name: cname, code: mk && cname ? U.counterCode(mk, cname) : '', mobile: '', gstin: '', isNew: !!(mk && cname) };
+    }
+    function showDet() { const p = picked(); ro.mobile.value = p.mobile; ro.gstin.value = p.gstin; }
     const cancelBox = h('input', { type: 'checkbox' });
     let current = null, hdr = null;
     const area = new ProductRows({ model, rateFn: () => [null, ''], showReset: false, emptyText: 'No product on this invoice.', totalLabel: 'Total Invoice Amount' });
     const resetBtn = h('button', { class: 'btn small gray', onclick: () => { if (current) load(current); } }, 'Reset');
     cancelBox.addEventListener('change', () => area.setCancelled(cancelBox.checked));
-    detail.append(h('section', { class: 'card' }, h('h3', {}, 'Invoice details (read only)'), detailGrid, h('label', { class: 'tick' }, cancelBox, ' Cancelled')),
+    detail.append(h('section', { class: 'card' }, h('h3', {}, 'Invoice details'), detailGrid, h('label', { class: 'tick' }, cancelBox, ' Cancelled')),
       h('section', { class: 'card' }, h('div', { class: 'row-between' }, h('h3', {}, 'Products – change, add or remove'), resetBtn), area.el),
       submitBar('SUBMIT CHANGES', submit, () => { serial.value = ''; lookup(); }, h('span')));
     function unload() { current = hdr = null; detail.hidden = true; }
@@ -1673,25 +1687,28 @@
     }
     function load(no) {
       const inv = model.invoices[no]; current = no; hdr = inv;
-      ro.date.value = U.dmy(inv.date); ro.market.value = inv.market; ro.counter.value = inv.counterName; ro.mobile.value = inv.mobile; ro.gstin.value = inv.gstin;
+      ro.date.value = U.dmy(inv.date); emk.set(inv.market); ecn.set(inv.counterName); ro.mobile.value = inv.mobile; ro.gstin.value = inv.gstin;
       cancelBox.checked = false; area.setCancelled(false); area.clear();
       inv.lines.forEach(l => area.addRow(false, l));
       cancelBox.checked = !inv.lines.length; area.setCancelled(cancelBox.checked);
-      note.textContent = 'Invoice found. Change the products below, or tick Cancelled.'; note.className = 'hint ok'; say(msg, '');
+      note.textContent = 'Invoice found. Change the market, counter or products below, or tick Cancelled.'; note.className = 'hint ok'; say(msg, '');
       detail.hidden = false;
     }
     function submit() {
       area.commitAll();
       const job = tryRun(() => {
         if (!current) throw new Error('Type the Serial Number of an existing outward invoice first.');
-        const lines = area.lines(), inv = hdr;
+        [emk, ecn].forEach(x => x.commit());
+        const pc = picked();
+        if (!pc.mk) throw new Error('Enter the Market.'); if (!pc.name) throw new Error('Enter the Counter.');
+        const lines = area.lines(), inv = Object.assign({}, hdr, { market: pc.mk, counterName: pc.name, counterCode: pc.code, mobile: pc.mobile, gstin: pc.gstin });
         const mk = [inv.date, current, inv.orderNo, inv.market, inv.counterName, inv.counterCode, inv.mobile, inv.gstin];
         let rows, billing = 0;
         if (lines.length) { billing = roundRupee(lines.reduce((a, l) => a + l.qty * l.rate, 0)); rows = lines.map(l => invoiceRow(...mk, billing, l)); }
         else rows = [invoiceRow(...mk)];
         const data = Object.assign({}, inv, { lines: lines.map(l => ({ type: l.type, item: l.item, sub: l.sub, colour: l.colour, qty: l.qty, price: plain(l.rate) })) });
         return { id: U.uuid(), label: `edited ${current}  |  ${inv.counterName}  |  ` + (lines.length ? '₹' + billing.toLocaleString('en-IN') : 'cancelled / no products'),
-          parts: [{ kind: 'invoice_edit', invoice: current, rows }], overlay: { invoice: { no: current, data } } };
+          parts: [{ kind: 'invoice_edit', invoice: current, rows }], overlay: { invoice: { no: current, data }, newCounter: pc.isNew ? { market: pc.mk, name: pc.name, code: pc.code } : null } };
       }, msg);
       if (!job) return;
       submitJob(job); say(msg, ''); submitted(after);

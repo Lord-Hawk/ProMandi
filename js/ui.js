@@ -290,8 +290,8 @@
           if (partial.has(k) && c[k]) notes.push(`There is an existing ${lbl}: ${c[k]}, but some fields are empty. Leave the box empty (or type the same one) to fill them with it; a different ${lbl} fills them and replaces the old one.`);
         });
         title = 'Add the missing details – optional:';
-      } else if (name && this.withType) {
-        this.info.textContent = ''; show = { mobile: true, gstin: true, type: true }; title = 'New counter – optional details:';
+      } else if (name && (this.withType || clean(market))) {
+        this.info.textContent = ''; show = { mobile: true, gstin: true, type: this.withType }; title = 'New counter – optional details:';
       } else this.info.textContent = '';
       this.fm.hidden = !show.mobile; this.fg.hidden = !show.gstin; this.ft.hidden = !show.type;
       this.box.hidden = !(show.mobile || show.gstin || show.type);
