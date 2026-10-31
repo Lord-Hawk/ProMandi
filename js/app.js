@@ -1320,7 +1320,7 @@
       market.set(f.market); counter.set(f.counter); counterChanged(); remarks.set(f.remarks || ''); prio(); cooler.value = f.cooler || '';
       (f.lines || []).forEach(l => area.addRow(false, { type: l.type, item: l.item, sub: l.sub, colour: l.colour, qty: l.qty, price: l.rate }));
       termsUpdate(); terms.value = f.terms || '';
-      (f.pays || []).forEach(p => { pay.addRow(false); const r = pay.rows[pay.rows.length - 1]; r.amt.value = String(p.amount); r.fill(); r.mode.value = p.mode; });
+      (f.pays || []).forEach(p => { pay.addRow(false); const r = pay.rows[pay.rows.length - 1]; r.amt.value = String(p.amount); r.fill(); r.mode.value = p.mode; pay.update(); });
       pay.update();
     }
     currentView = { onData() { syncBeat(); area.refreshRates(); counterChanged(); }, tick: syncBeat };     // tick: a new day starts -> its beat
@@ -1439,7 +1439,7 @@
     if (ent) {
       if (by && ent.form.by) by.set(ent.form.by);
       market.set(ent.form.market); counter.set(ent.form.counter); upd();
-      (ent.form.pays || []).forEach(p => { pay.addRow(false); const r = pay.rows[pay.rows.length - 1]; r.amt.value = String(p.amount); r.fill(); r.mode.value = p.mode; });
+      (ent.form.pays || []).forEach(p => { pay.addRow(false); const r = pay.rows[pay.rows.length - 1]; r.amt.value = String(p.amount); r.fill(); r.mode.value = p.mode; pay.update(); });
       pay.update();
     }
     currentView = { onData: upd };
@@ -1528,13 +1528,15 @@
     const cd = new CounterDetails(model, false);
     const code = () => { const c = model.findCounter(market.get(), counter.get()); return c ? c.code : ''; };
     const area = new ProductRows({ model, rateFn: (c, k) => model.rateFor(c, k), codeFn: code, emptyText: 'No product added. Tap “＋ Add Product” to start the invoice.', totalLabel: 'Total Invoice Amount' });
+    const pay = new PaymentRows();
     function invChanged() { const sr = serial.value.trim(), d = date.get(); invNo.value = /^\d+$/.test(sr) && +sr > 0 && U.parseIso(d) ? U.invoiceNo(sr, d) : ''; }
     function counterChanged() { cd.update(market.get(), counter.get()); area.refreshRates(); }
     serial.addEventListener('input', invChanged);
-    const clear = () => { serial.value = ''; market.set(''); counter.set(''); cd.reset(); area.clear(); invChanged(); };
+    const clear = () => { serial.value = ''; market.set(''); counter.set(''); cd.reset(); area.clear(); pay.reset(); invChanged(); };
     main.append(h('section', { class: 'card' }, h('h3', {}, 'Outward invoice'),
       h('div', { class: 'grid2' }, field('Date', date), field('Serial Number', serial)), field('Invoice Number', invNo), field('Market', market.el), field('Counter', counter.el), cd.el),
       h('section', { class: 'card' }, h('h3', {}, 'Invoice – products, quantity and rate'), area.el),
+      h('section', { class: 'card' }, h('h3', {}, 'Payment received'), pay.el),
       submitBar('SUBMIT INVOICE', () => {
         [market, counter].forEach(c => c.commit()); area.commitAll();
         const job = tryRun(() => {
@@ -1552,10 +1554,12 @@
           const c = known || { name: cname, code: U.counterCode(mk, cname) };      // a new counter
           const billing = roundRupee(lines.reduce((a, l) => a + l.qty * l.rate, 0));
           const rows = lines.map(l => invoiceRow(ds, ino, '', mk, c.name, c.code, mobile, gstin, billing, l));
-          const data = { date: ds, orderNo: '', market: mk, counterName: c.name, counterCode: c.code, mobile, gstin, lines: lines.map(l => ({ type: l.type, item: l.item, sub: l.sub, colour: l.colour, qty: l.qty, price: plain(l.rate) })) };
+          const pays = pay.payments();
+          const data = { date: ds, orderNo: '', market: mk, counterName: c.name, counterCode: c.code, mobile, gstin, lines: lines.map(l => ({ type: l.type, item: l.item, sub: l.sub, colour: l.colour, qty: l.qty, price: plain(l.rate) })), pays: pays.map(p => ({ mode: p.mode, amount: p.amount })) };
           const parts = []; const hasFill = fill && Object.keys(fill).length;
           if (hasFill) parts.push({ kind: 'fill', code: c.code, values: fill, replace });
           parts.push({ sheet: 'Invoice Record', rows });
+          if (pays.length) parts.push({ sheet: 'Payments Received', rows: [invoicePayRow(ds, ino, mk, c.name, c.code, pays)] });
           return { id: U.uuid(), label: `${ino}  |  ${c.name}  |  ₹${billing.toLocaleString('en-IN')}`, parts,
             overlay: { invoice: { no: ino, data }, newCounter: known ? null : { market: mk, name: c.name, code: c.code, mobile, gstin }, fill: hasFill ? Object.assign({ code: c.code, replace }, fill) : null } };
         }, msg);
@@ -1566,6 +1570,12 @@
     currentView = { onData() { counterChanged(); } };
   }
 
+  /* a payment taken with an outward invoice -> one Payments Received row, "logged by" = "Invoice <no.>" */
+  function invoicePayRow(ds, ino, mk, cname, code, pays) {
+    const row = { date: ds, 'entry id': 'inv:' + ino, market: mk, 'counter name': cname, 'counter code': code, total: plain(pays.reduce((a, p) => a + p.amount, 0)), 'received by': 'Invoice ' + ino, 'logged by': 'Invoice ' + ino };
+    pays.forEach(p => { row[p.mode.toLowerCase()] = plain((row[p.mode.toLowerCase()] || 0) + p.amount); });
+    return row;
+  }
   /* Cash discount %: numbers only (a typed % sign is removed); empty = 0 */
   function discountBox() {
     const i = h('input', { class: 'inp', inputmode: 'decimal', placeholder: '0', autocomplete: 'off' });
@@ -1670,9 +1680,11 @@
     let current = null, hdr = null;
     const area = new ProductRows({ model, rateFn: () => [null, ''], showReset: false, emptyText: 'No product on this invoice.', totalLabel: 'Total Invoice Amount' });
     const resetBtn = h('button', { class: 'btn small gray', onclick: () => { if (current) load(current); } }, 'Reset');
+    const epay = new PaymentRows();
     cancelBox.addEventListener('change', () => area.setCancelled(cancelBox.checked));
     detail.append(h('section', { class: 'card' }, h('h3', {}, 'Invoice details'), detailGrid, h('label', { class: 'tick' }, cancelBox, ' Cancelled')),
       h('section', { class: 'card' }, h('div', { class: 'row-between' }, h('h3', {}, 'Products – change, add or remove'), resetBtn), area.el),
+      h('section', { class: 'card' }, h('h3', {}, 'Payment received with this invoice'), epay.el),
       submitBar('SUBMIT CHANGES', submit, () => { serial.value = ''; lookup(); }, h('span')));
     function unload() { current = hdr = null; detail.hidden = true; }
     function lookup() {
@@ -1691,6 +1703,7 @@
       cancelBox.checked = false; area.setCancelled(false); area.clear();
       inv.lines.forEach(l => area.addRow(false, l));
       cancelBox.checked = !inv.lines.length; area.setCancelled(cancelBox.checked);
+      epay.reset(); (inv.pays || []).forEach(p => { epay.addRow(false); const r = epay.rows[epay.rows.length - 1]; r.amt.value = String(p.amount); r.fill(); r.mode.value = p.mode; epay.update(); }); epay.update();
       note.textContent = 'Invoice found. Change the market, counter or products below, or tick Cancelled.'; note.className = 'hint ok'; say(msg, '');
       detail.hidden = false;
     }
@@ -1706,9 +1719,10 @@
         let rows, billing = 0;
         if (lines.length) { billing = roundRupee(lines.reduce((a, l) => a + l.qty * l.rate, 0)); rows = lines.map(l => invoiceRow(...mk, billing, l)); }
         else rows = [invoiceRow(...mk)];
-        const data = Object.assign({}, inv, { lines: lines.map(l => ({ type: l.type, item: l.item, sub: l.sub, colour: l.colour, qty: l.qty, price: plain(l.rate) })) });
+        const pays = epay.payments();
+        const data = Object.assign({}, inv, { lines: lines.map(l => ({ type: l.type, item: l.item, sub: l.sub, colour: l.colour, qty: l.qty, price: plain(l.rate) })), pays: pays.map(p => ({ mode: p.mode, amount: p.amount })) });
         return { id: U.uuid(), label: `edited ${current}  |  ${inv.counterName}  |  ` + (lines.length ? '₹' + billing.toLocaleString('en-IN') : 'cancelled / no products'),
-          parts: [{ kind: 'invoice_edit', invoice: current, rows }], overlay: { invoice: { no: current, data }, newCounter: pc.isNew ? { market: pc.mk, name: pc.name, code: pc.code } : null } };
+          parts: [{ kind: 'invoice_edit', invoice: current, rows }, { kind: 'invoice_pay', invoice: current, rows: pays.length ? [invoicePayRow(inv.date, current, inv.market, inv.counterName, inv.counterCode, pays)] : [] }], overlay: { invoice: { no: current, data }, newCounter: pc.isNew ? { market: pc.mk, name: pc.name, code: pc.code } : null } };
       }, msg);
       if (!job) return;
       submitJob(job); say(msg, ''); submitted(after);
