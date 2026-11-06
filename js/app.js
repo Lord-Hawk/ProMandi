@@ -217,7 +217,7 @@
         v.mgmtRole = v.mgmtRole.trim();
         go.disabled = true; say(err, '');
         try {
-          const r = await api('register_request', Object.assign({ deviceType: await deviceType(), location: Loc.get() }, v));
+          const r = await api('register_request', Object.assign({ deviceId: deviceId(), deviceType: await deviceType(), location: Loc.get() }, v));
           st.requestId = r.requestId; st.sentTo = r.sentTo; step2();
         } catch (e) { say(err, e.message, true); } finally { go.disabled = false; }
       } }, 'Send OTP');
