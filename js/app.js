@@ -113,7 +113,7 @@
   async function flush() {
     while (S.outbox.length) {
       const job = S.outbox[0];
-      try { await authed('submit', { job: { id: job.id, parts: job.parts } }); S.outbox.shift(); save('outbox'); }
+      try { await authed('submit', { job: { id: job.id, parts: job.parts } }); S.outbox.shift(); save('outbox'); store.set('upAt', Date.now()); }
       catch (e) {
         if (e.offline) return false;
         if (e.code === 'removed' || e.code === 'blocked') throw e;
@@ -128,7 +128,7 @@
   async function bootstrapNow() {
     const before = S.profile;
     const r = await authed('bootstrap', {});
-    S.snapshot = r.data; S.profile = r.profile; S.verifiedAt = Date.now(); lastRefresh = Date.now();
+    S.snapshot = r.data; S.profile = r.profile; S.verifiedAt = Date.now(); lastRefresh = Date.now(); store.set('snapAt', Date.now());
     save('snapshot'); save('profile'); save('verifiedAt'); rebuildModel();
     if (profileChanged(before, r.profile)) { U.toast('Your role is now ' + (r.profile.title || r.profile.position)); home(); }       // new role -> new screens
     else if (currentView && currentView.onData) currentView.onData();
@@ -143,7 +143,7 @@
       const ok = await flush();
       if (ok && had) refreshReports(true).catch(() => {});               // something was uploaded: the report data changed
       if (ok) {
-        if (force || Date.now() - lastRefresh > CFG.REFRESH_SECS * 1000 - 2000 || !S.snapshot) await bootstrapNow();
+        if (force || had || Date.now() - lastRefresh > CFG.REFRESH_SECS * 1000 - 2000 || !S.snapshot) await bootstrapNow();   // after an upload: the sheet's fresh figures at once
         else {                                                            // quick check: blocked / removed / role changed by the owner?
           const r = await authed('whoami', {});
           if (profileChanged(S.profile, r.profile)) await bootstrapNow();
@@ -164,7 +164,7 @@
         h('button', { class: 'btn big', onclick: () => sync(true) }, 'Check again'))));
   }
   function deregister(msg) {
-    ['token', 'profile', 'snapshot', 'verifiedAt', 'outbox', 'failed', 'rdata', 'rep', 'day', 'ord'].forEach(k => store.del(k)); S.day = null; S.ord = null; RD.data = null;
+    ['token', 'profile', 'snapshot', 'verifiedAt', 'outbox', 'failed', 'rdata', 'rep', 'day', 'ord', 'pay', 'hday'].forEach(k => store.del(k)); S.day = null; RD.data = null;
     S.profile = null; S.snapshot = null; S.outbox = []; S.failed = []; delete mem.token;
     start(msg);
   }
@@ -282,7 +282,7 @@
     if (pos !== 'Accountant') main.append(card('BEAT DETAILS', 'View markets of any beat, targets achieved and payments pending', 'gold', () => beatView()));
     else main.append(card('LOG INWARD INVOICES', 'Log the products that came in', 'green', () => inwardView()), card('LOG OUTWARD INVOICES', 'Log the invoices raised to the counters', 'blue', () => outwardView()), card('EDIT PREVIOUS INVOICE', 'Change, add or remove products of an outward invoice, or cancel it', 'slate', () => editView()));
     main.append(card('COUNTER SEARCH', "View any counter's visits, orders, invoices and more", 'teal', () => counterView()));
-    if (!isHead && own === 'Manager') main.append(card('PROFIT AND LOSS', 'Daily, monthly and yearly profit from the invoices', 'cyan', () => pnlView()));
+    if (pos === 'Manager') main.append(card('PROFIT AND LOSS', 'Daily, monthly and yearly profit from the invoices', 'cyan', () => pnlView()));
     if (isFieldRole() && day().in && !day().out) main.append(roundBtn('CHECK OUT', 'End your day', 'out', () => checkoutView()));
     const fl = failedList(); if (fl) main.append(fl);
     const key = dayKey();
@@ -662,16 +662,14 @@
   function day() {                                               // today's attendance + the summaries of today's entries, in order
     const t = U.todayIso();
     if (!S.day || S.day.date !== t || S.day.who !== S.profile.name) { S.day = { date: t, who: S.profile.name, in: '', out: '', entries: [], serverText: '' }; save('day'); }
-    const a = S.snapshot && S.snapshot.attendance;               // what the server knows (e.g. after a reinstall, or another phone)
-    if (a && a.date === t) {
-      let ch = false;
-      if (a.in && !S.day.in) { S.day.in = a.in; ch = true; }
-      if (a.beat && !S.day.beat) { S.day.beat = a.beat; ch = true; }
-      if (a.out && !S.day.out) { S.day.out = a.out; ch = true; }
-      if (a.summary && !S.day.serverText) { S.day.serverText = a.summary; S.day.serverTimes = a.times || ''; S.day.serverLocs = a.locs || ''; ch = true; }
-      if (a.inLoc && !S.day.inLoc) { S.day.inLoc = a.inLoc; ch = true; }
-      if (a.outLoc && !S.day.outLoc) { S.day.outLoc = a.outLoc; ch = true; }
-      if (ch) save('day');
+    const a = S.snapshot && S.snapshot.attendance;               // the Attendance sheet is the master: what it says wins over this phone's memory
+    if (a && a.date === t && !((store.get('upAt', 0) || 0) > (store.get('snapAt', 0) || 0))) {   // (not while the sheet's copy is older than the last upload)
+      const waiting = k => S.outbox.some(j => (j.parts || []).some(p => p.kind === k && p.date === t));   // this phone's Check In / Check Out not uploaded yet
+      const before = JSON.stringify([S.day.in, S.day.out, S.day.beat, S.day.inLoc, S.day.outLoc, S.day.serverText]);
+      if (!waiting('attend')) { S.day.in = a.in || ''; S.day.inLoc = a.inLoc || ''; if (a.beat) S.day.beat = a.beat; }
+      if (!waiting('checkout')) { S.day.out = a.out || ''; S.day.outLoc = a.outLoc || ''; }
+      S.day.serverText = a.summary || ''; S.day.serverTimes = a.times || ''; S.day.serverLocs = a.locs || '';
+      if (JSON.stringify([S.day.in, S.day.out, S.day.beat, S.day.inLoc, S.day.outLoc, S.day.serverText]) !== before) save('day');
     }
     return S.day;
   }
@@ -681,13 +679,14 @@
   const canWork = () => !isFieldRole() || (!!day().in && !day().out);
   const nowTime = () => new Date().toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true }).toUpperCase();
   const dmyFull = iso => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || ''); return m ? m[3] + '/' + m[2] + '/' + m[1] : ''; };
-  /* today's orders per person – what the server knew at the last sync + what this phone made since – for "Order No." and "Daily Cumulative" */
-  S.ord = store.get('ord', null);
+  /* today's orders and payments: what the Google Sheet had at the last sync + this phone's entries still waiting to upload.
+     The sheet is the master – nothing older from the phone's memory is used. */
+  function pendingJobs(iso) { return S.outbox.filter(j => j.date === iso); }
   function ordersOf(who, iso) {
     const k = norm(who), out = {};
     const sv = S.snapshot && S.snapshot.ordersToday;
     if (sv && sv.date === iso) Object.assign(out, (sv.byName || {})[k] || {});
-    if (S.ord && S.ord.date === iso) Object.assign(out, (S.ord.byName || {})[k] || {});
+    pendingJobs(iso).forEach(j => { if (j.dropOrder) delete out[j.dropOrder]; if (j.order && norm(j.order.who) === k) out[j.order.no] = j.order.value; });
     return out;
   }
   function nextOrderNo(who, iso) {                               // same rule as the server: d/m/yy-Name-N, N = next free
@@ -696,31 +695,20 @@
     const top = used.reduce((a, n) => Math.max(a, +n.slice(pre.length) || 0), 0);
     return pre + (Math.max(top, used.length) + 1);
   }
-  function noteOrder(who, no, value) {
-    const iso = U.todayIso();
-    if (!S.ord || S.ord.date !== iso) S.ord = { date: iso, byName: {} };
-    const k = norm(who); (S.ord.byName[k] || (S.ord.byName[k] = {}))[no] = value; save('ord');
+  function allOrders(iso) {                                      // the whole team's orders of the day {Order No.: value}
+    const out = {}, sv = S.snapshot && S.snapshot.ordersToday;
+    if (sv && sv.date === iso) Object.keys(sv.byName || {}).forEach(w => Object.assign(out, sv.byName[w]));
+    pendingJobs(iso).forEach(j => { if (j.dropOrder) delete out[j.dropOrder]; if (j.order) out[j.order.no] = j.order.value; });
+    return out;
   }
-  /* the whole team's orders / payments of a day (server at the last sync + what this phone sent since) – for the "Daily Cumulative" lines */
-  function allOrders(iso) {
-    const out = {}, add = src => { if (src && src.date === iso) Object.keys(src.byName || {}).forEach(w => Object.assign(out, src.byName[w])); };
-    add(S.snapshot && S.snapshot.ordersToday); add(S.ord);
-    return out;                                                   // {Order No.: value}
-  }
-  S.pay = store.get('pay', null);
-  function notePay(id, amount) {
-    const iso = U.todayIso();
-    if (!S.pay || S.pay.date !== iso) S.pay = { date: iso, byId: {} };
-    S.pay.byId[id] = amount; save('pay');
-  }
-  function allPays(iso) {
+  function allPays(iso) {                                        // the whole team's payments of the day {entry id: total}
     const out = {}, sv = S.snapshot && S.snapshot.paysToday;
     if (sv && sv.date === iso) Object.assign(out, sv.byId || {});
-    if (S.pay && S.pay.date === iso) Object.assign(out, S.pay.byId || {});
-    return out;                                                   // {entry id: total}
+    pendingJobs(iso).forEach(j => { if (j.entry && j.entry.id && 'payTotal' in j) out[j.entry.id] = j.payTotal || 0; });
+    return out;
   }
   const payCumulative = (ent, remote, entryId, total, ds) => {
-    if (remote) return (ent.dayPays || 0) - (ent.form.pays || []).reduce((a, p) => a + p.amount, 0) + total;
+    if (remote) return (ent.cumPays || 0) - (ent.payTotal || 0) + total;     // an entry opened from the sheet: its own running total, changed by the edit
     const o = allPays(ds); delete o[entryId];
     return Object.values(o).reduce((a, v) => a + (+v || 0), 0) + total;
   };
@@ -736,15 +724,24 @@
     const ordersL = ents.length ? ents.map(e => e.types || {}) : (d.orders || []), paysL = ents.length ? ents.map(e => e.pays || []) : (d.pays || []);
     ordersL.forEach(t => Object.keys(t).forEach(k => { types[k] = (types[k] || 0) + t[k]; orderToday += t[k]; }));
     paysL.forEach(list => list.forEach(p => { pay[p.mode] = (pay[p.mode] || 0) + p.amount; payToday += p.amount; }));
-    const mb = S.snapshot && S.snapshot.monthBefore && S.snapshot.monthBefore.date === d.date ? S.snapshot.monthBefore : { orders: 0, payments: 0 };
-    return { types, orderToday, orderMonthBefore: mb.orders || 0, pay, payToday, payMonthBefore: mb.payments || 0, beat: model.beatForDate(d.date) };
+    // the month so far kept on the phone at Check In (everyone, 1st to yesterday) + the team's day as the phone last saw it
+    const mb = d.monthBefore && d.monthBefore.date === d.date ? d.monthBefore : { orders: 0, payments: 0 };
+    const teamO = Math.max(orderToday, Object.values(allOrders(d.date)).reduce((a, v) => a + (+v || 0), 0));
+    const teamP = Math.max(payToday, Object.values(allPays(d.date)).reduce((a, v) => a + (+v || 0), 0));
+    return { types, orderToday, orderMonthBefore: (mb.orders || 0) + teamO - orderToday, pay, payToday, payMonthBefore: (mb.payments || 0) + teamP - payToday, beat: model.beatForDate(d.date) };
+  }
+  async function keepMonthSoFar(iso) {                          // at Check In / Check Out: everyone's month so far, kept on the phone in case the sheet can't be reached later
+    try {
+      const r = await authed('day_report', { date: iso }), d = day();
+      if (d.date === iso) { d.monthBefore = { date: iso, orders: +r.orderBeforeToday || 0, payments: +r.payBeforeToday || 0 }; save('day'); }
+    } catch (e) {}
   }
   function dayReportText(name, d, t) {
     const r0 = x => Math.round(x), types = Object.keys(t.types || {}).filter(k => t.types[k]).sort((a, b) => a.localeCompare(b));
     const modes = ['Cash', 'UPI', 'Cheque', 'Card'].filter(m => t.pay && t.pay[m]);
     return ['***** *_DAY END_* *****', '',
       '** _*ORDER REPORT*_ **',
-      'Name: ' + name, 'Beat day: ' + beatDay(d.beat || t.beat || calBeat(d.date)), 'Date: ' + dmyFull(d.date),
+      ...(d.team ? [] : ['Name: ' + name, 'Beat day: ' + beatDay(d.beat || t.beat || calBeat(d.date))]), 'Date: ' + dmyFull(d.date),
       ...types.map(k => '_' + k + ' Value_: ' + money(r0(t.types[k]))),
       '*Total Value*: ' + money(r0(t.orderToday)), '*_Cumulative Value_*: ' + money(r0(t.orderMonthBefore + t.orderToday)),
       '', '** *_PAYMENT REPORT_* **',
@@ -805,12 +802,16 @@
       h('div', { class: 'submitbar' }, btn), msg));
     async function mark() {
       if (day().in) return home();
+      if (!navigator.onLine) return say(msg, 'Check In needs the internet. Connect and try again.', true);
       btn.disabled = true; say(msg, 'Getting your location…');
       const loc = await locNow(6000);
       const d = day(), t = nowTime();
-      d.in = t; d.inLoc = loc; save('day');
-      submitJob({ id: U.uuid(), label: 'Attendance – Check In (' + t + ')', parts: [{ kind: 'attend', date: d.date, time: t, location: loc, beat: beatFor(d.date) }], overlay: null });
-      U.toast('Check In: ' + t); home();
+      say(msg, 'Checking in…');
+      try { await authed('submit', { job: { id: U.uuid(), parts: [{ kind: 'attend', date: d.date, time: t, location: loc, beat: beatFor(d.date) }] } }); }   // straight to the sheet – no internet, no Check In
+      catch (e) { btn.disabled = false; return say(msg, e.offline ? 'Check In needs the internet. Connect and try again.' : e.message, true); }
+      d.in = t; d.inLoc = loc; save('day'); store.set('upAt', Date.now());   // the sheet copy on the phone is now older than this Check In
+      await keepMonthSoFar(d.date);
+      U.toast('Check In: ' + t); home(); sync(true);
     }
     currentView = { onData() { if (day().in) home(); }, tick() { if (day().in || day().date !== U.todayIso()) home(); } };
   }
@@ -822,20 +823,59 @@
   const pencilBtn = onclick => iconOnly(ICON_PEN, 'Edit this entry', onclick, 'topedit');
   const editBar = (onSave, msg, onReset, onCancel) => h('div', { class: 'submitbar editbar' }, h('button', { class: 'btn big', onclick: onSave }, 'SAVE CHANGES'),
     h('button', { class: 'btn gray', onclick: () => { onReset(); window.scrollTo({ top: 0 }); U.toast('Back to how the entry was'); } }, 'Reset'), h('button', { class: 'btn gray', onclick: onCancel }, 'Cancel'), msg);
-  function entriesView() {
+  const backToList = () => (isHeadUser() ? headEntriesView() : entriesView(true));
+  /* the text of one entry, made from the sheet's rows (same layout as the summary shown when it was submitted) */
+  function entryText(e, iso) {
+    const f = e.form || {}, ds = dmyShort(iso), lines = f.lines || [], pays = f.pays || [];
+    if (e.kind === 'Payment') {
+      const tot = pays.reduce((a, p) => a + p.amount, 0);
+      return ['_*Details:*_', 'Date: ' + ds, 'Market: ' + e.market, 'Counter: ' + e.counter, '', '_*Payments:*_', ...payText(pays), '*Total:* ' + money(plain(tot)), '_*Daily Cumulative:*_ ' + money(plain(e.cumPays || 0))].join('\n');
+    }
+    const sum = ['_*Visit:*_', 'Date: ' + ds, 'Beat: ' + (f.outBeat ? 'Out of Beat' : f.beat), 'Market: ' + e.market, 'Counter: ' + e.counter,
+                 'Mobile No.: ' + (e.mobile || 'None'), 'GSTIN/PAN: ' + (e.gstin || 'None'), 'Remarks: ' + (f.remarks || 'None'), 'Interest in Cooler: ' + (f.cooler || '')];
+    if (lines.length) {
+      sum.push('', '_*Orders:*_', 'Order No.: ' + e.orderNo);
+      lines.forEach(l => { sum.push([l.item, l.sub].map(x => sval(x)).filter(Boolean).join(' ')); if (sval(l.colour) && sval(l.colour).toUpperCase() !== 'N/A') sum.push(sval(l.colour)); sum.push(l.qty + ' pc. @ ' + money(l.rate)); });
+      sum.push('*Order Value:* ' + money(roundRupee(lines.reduce((a, l) => a + l.qty * l.rate, 0))), '_*Daily Cumulative:*_ ' + money(e.cumOrders || 0), 'Payment Terms: ' + (f.terms || ''));
+    }
+    if (pays.length) sum.push('', '_*Payments:*_', ...payText(pays), '_*Daily Cumulative:*_ ' + money(plain(e.cumPays || 0)));
+    return sum.join('\n');
+  }
+  const waitingIds = () => new Set(S.outbox.filter(j => j.entry && j.entry.id).map(j => j.entry.id));
+  /* today's entries as the Google Sheet has them (+ this phone's entries still waiting to upload) */
+  async function sheetEntries(iso) {
+    const r = await authed('entries_of', { date: iso });
+    const list = (r.entries || []).map(e => Object.assign(e, { remote: true, date: iso, dayOrders: r.dayOrders || {}, dayPays: r.dayPays || 0 }));
+    const wait = waitingIds(), local = isFieldRole() ? day().entries : [];
+    const out = list.map(e => (wait.has(e.id) && local.find(x => x.id === e.id)) || e);      // an edit not uploaded yet: this phone's version
+    local.forEach(x => { if (wait.has(x.id) && !out.some(e => e.id === x.id)) out.push(x); });  // a new entry not uploaded yet
+    return out;
+  }
+  function entriesView(cached) {
     if (!canWork()) return home();
-    const main = shell('Previous Entries', home);
-    const list = entryList(), head = !isFieldRole();
+    const main = shell('Previous Entries', home), note = h('p', { class: 'hint' }), box = h('div');
+    main.append(note, box);
     const pick = (t, k) => { const m = new RegExp('^' + k + ':\\s*(.+)$', 'm').exec(t || ''); return m ? m[1].trim() : ''; };
-    if (!list.length) main.append(h('section', { class: 'card' }, h('p', { class: 'hint' }, head ? 'No entries yet today. Visits and payments you log on this page today appear here.' : 'No entries yet today. Visits and payments you submit today appear here.')));
-    list.forEach((e, i) => {
-      const open = m => (e.kind === 'Payment' ? payView : visitView)({ entry: e, mode: m });
-      const title = 'Entry ' + (i + 1) + ': ' + (e.market || pick(e.text, 'Market')) + ' - ' + (e.counter || pick(e.text, 'Counter')) + (head && e.by ? ' (' + e.by + ')' : '');
-      const cap = (e.cat || (e.kind === 'Payment' ? 'Payment without Visit' : 'Visit')) + (e.time ? ' · ' + e.time : '') + (e.edited ? ' · edited ' + e.edited : '');
-      const eye = iconOnly(ICON_EYE, 'View', () => open('view')), pen = iconOnly(ICON_PEN, 'Edit', () => open('edit'));
-      if (!e.form) eye.disabled = pen.disabled = true;               // entries brought back from the server after a reinstall
-      main.append(h('div', { class: 'entrybox' }, h('div', { class: 'eb-text' }, h('b', {}, title), h('span', {}, cap)), h('div', { class: 'eb-acts' }, eye, pen)));
-    });
+    function draw(list) {
+      box.replaceChildren();
+      if (!list.length) box.append(h('section', { class: 'card' }, h('p', { class: 'hint' }, 'No entries yet today. Visits and payments you submit today appear here.')));
+      list.forEach((e, i) => {
+        e.no = String(i + 1);
+        const open = m => (e.kind === 'Payment' ? payView : visitView)({ entry: e, mode: m });
+        const title = 'Entry ' + (i + 1) + ': ' + (e.market || pick(e.text, 'Market')) + ' - ' + (e.counter || pick(e.text, 'Counter'));
+        const cap = (e.cat || (e.kind === 'Payment' ? 'Payment without Visit' : 'Visit')) + (e.time ? ' · ' + e.time : '') + (e.edited ? ' · edited ' + e.edited : '');
+        const eye = iconOnly(ICON_EYE, 'View', () => open('view')), pen = iconOnly(ICON_PEN, 'Edit', () => open('edit'));
+        if (!e.form) eye.disabled = pen.disabled = true;
+        box.append(h('div', { class: 'entrybox' }, h('div', { class: 'eb-text' }, h('b', {}, title), h('span', {}, cap)), h('div', { class: 'eb-acts' }, eye, pen)));
+      });
+    }
+    const today = U.todayIso();
+    if (cached && HE.mine && HE.date === today && HE.list) { draw(HE.list); }
+    else {
+      note.textContent = 'Getting today’s entries from the Google Sheet…';
+      sheetEntries(today).then(list => { Object.assign(HE, { mine: true, name: S.profile.name, date: today, list }); note.textContent = ''; draw(list); })
+        .catch(e => { note.textContent = e.offline ? 'No internet – showing this phone’s copy of today’s entries.' : e.message; draw(day().entries); });
+    }
     currentView = { onData() { if (!canWork()) home(); }, tick() { if (!canWork()) home(); } };
   }
 
@@ -882,12 +922,20 @@
       h('div', { class: 'submitbar' }, endBtn), ask, msg));
     async function end() {
       const d = day(); if (d.out) return daySummaryView();
-      ask.querySelectorAll('button').forEach(b => { b.disabled = true; }); say(msg, 'Ending the day…');
-      const loc = await locNow(6000), t = nowTime();
-      d.out = t; d.outLoc = loc; save('day');
-      const list = dayEntries(d);
-      submitJob({ id: U.uuid(), label: 'Check Out (' + t + ')', parts: [{ kind: 'checkout', date: d.date, time: t, location: loc, entries: list.length, summary: dayText(d),
-        times: list.map(e => [e.kind, e.time].filter(Boolean).join(' · ')), locs: list.map(e => e.loc || '') }], overlay: null });
+      const fail = text => { ask.querySelectorAll('button').forEach(b => { b.disabled = false; }); say(msg, text, true); };
+      if (!navigator.onLine) return fail('Check Out needs the internet. Connect and try again.');
+      ask.querySelectorAll('button').forEach(b => { b.disabled = true; }); say(msg, 'Uploading today’s entries…');
+      const t0 = Date.now();
+      while (S.outbox.length && Date.now() - t0 < 20000) { await sync(false); if (S.outbox.length) await new Promise(r => setTimeout(r, 800)); }
+      if (S.outbox.length) return fail('Some entries are still uploading. Check Out needs the internet – connect and try again.');
+      say(msg, 'Ending the day…');
+      const loc = await locNow(6000), t = nowTime(), list = dayEntries(d);
+      try {
+        await authed('submit', { job: { id: U.uuid(), parts: [{ kind: 'checkout', date: d.date, time: t, location: loc, entries: list.length, summary: dayText(d),
+          times: list.map(e => [e.kind, e.time].filter(Boolean).join(' · ')), locs: list.map(e => e.loc || '') }] } });
+      } catch (e) { return fail(e.offline ? 'Check Out needs the internet. Connect and try again.' : e.message); }
+      d.out = t; d.outLoc = loc; save('day'); store.set('upAt', Date.now());
+      keepMonthSoFar(d.date);
       daySummaryView();
     }
     currentView = { onData() { if (day().out) home(); }, tick() { if (day().date !== U.todayIso()) home(); } };
@@ -963,41 +1011,55 @@
   function daySummaryView() {
     if (!isFieldRole() || !day().out) return home();
     const main = shell('Today’s Summary', home);
-    const d = day(), list = dayEntries(d), title = S.profile.name + '’s work on ' + dmyFull(d.date);
-    const dy = { date: d.date, in: d.in, out: d.out, inLoc: d.inLoc || '', outLoc: d.outLoc || '', list, role: S.profile.title || S.profile.position };
+    const d = day(), title = S.profile.name + '’s work on ' + dmyFull(d.date);
     const fname = S.profile.name + "'s work on " + dmyFull(d.date).replace(/\//g, '-') + '.pdf';
     const shareBtn = iconBtn('green', ICON_SHARE, 'Share PDF', share), dlBtn = h('button', { type: 'button', class: 'btn gray', onclick: download }, 'Download PDF');
-    const status = h('p', { class: 'hint' }, 'Making the PDF…');
+    const status = h('p', { class: 'hint' }, 'Getting today’s entries from the Google Sheet…'), stats = h('div', { class: 'daystats' }), locs = h('div'), rest = h('div');
     shareBtn.disabled = dlBtn.disabled = true;
-    main.append(h('section', { class: 'card' }, h('h3', {}, title),
-        h('div', { class: 'daystats' }, h('div', {}, h('small', {}, 'Check In'), h('b', {}, d.in || '–')), h('div', {}, h('small', {}, 'Check Out'), h('b', {}, d.out)), h('div', {}, h('small', {}, 'Entries'), h('b', {}, String(list.length)))),
-        h('p', { class: 'locline' }, 'Check In – Location: ' + locText(dy.inLoc)), h('p', { class: 'locline' }, 'Check Out – Location: ' + locText(dy.outLoc)),
-        h('div', { class: 'summary-actions' }, shareBtn, dlBtn), status),
-      h('section', { class: 'card' }, h('h3', {}, 'Today on the map'), mapSvg(dy)),
-      ...(list.length ? list.map((e, i) => h('section', { class: 'card entry' }, h('div', { class: 'row-between' }, h('h3', {}, 'Entry ' + (i + 1) + ':'), h('small', { class: 'hint' }, [e.kind, e.time].filter(Boolean).join(' · '))),
-                        h('p', { class: 'locline' }, 'Location: ' + locText(e.loc)), h('div', { class: 'entrytext' }, e.text.replace(/[_*]/g, ''))))
-                  : [h('section', { class: 'card' }, h('p', { class: 'hint' }, 'No visits or payments were logged today.'))]));
-    let blob = null;
-    (async () => {                                               // the Day End report goes into the PDF, right after the map
-      let note = '';
-      if (d.report) dy.report = d.report;
-      else {
-        status.textContent = 'Preparing the Day End report…';
+    main.append(h('section', { class: 'card' }, h('h3', {}, title), stats, locs, h('div', { class: 'summary-actions' }, shareBtn, dlBtn), status), rest);
+    let blob = null, busy = false, done = false, local = false;
+    async function makeLocal() {                                 // the sheet can't be reached: the phone's copy + the month so far kept at Check In
+      const dd = day(), list = dayEntries(dd);
+      const dy = { date: dd.date, in: dd.in, out: dd.out, inLoc: dd.inLoc || '', outLoc: dd.outLoc || '', list, role: S.profile.title || S.profile.position, report: dayReportText(S.profile.name, dd, localTotals(dd)) };
+      stats.replaceChildren(h('div', {}, h('small', {}, 'Check In'), h('b', {}, dd.in || '–')), h('div', {}, h('small', {}, 'Check Out'), h('b', {}, dd.out || '–')), h('div', {}, h('small', {}, 'Entries'), h('b', {}, String(list.length))));
+      locs.replaceChildren(h('p', { class: 'locline' }, 'Check In – Location: ' + locText(dy.inLoc)), h('p', { class: 'locline' }, 'Check Out – Location: ' + locText(dy.outLoc)));
+      rest.replaceChildren(h('section', { class: 'card' }, h('h3', {}, 'Today on the map'), mapSvg(dy)),
+        ...list.map((e, i) => h('section', { class: 'card entry' }, h('div', { class: 'row-between' }, h('h3', {}, 'Entry ' + (i + 1) + ':'), h('small', { class: 'hint' }, [e.kind, e.time].filter(Boolean).join(' · '))),
+                    h('p', { class: 'locline' }, 'Location: ' + locText(e.loc)), h('div', { class: 'entrytext' }, e.text.replace(/[_*]/g, '')))));
+      blob = await makeWorkPdf(S.profile.name, title, null, [dy], true);
+      shareBtn.disabled = dlBtn.disabled = false; local = true;
+      status.textContent = 'PDF ready: ' + fname + '  (the Google Sheet could not be reached – made from this phone’s copy; it is remade from the sheet as soon as you are online)';
+      status.className = 'hint';
+    }
+    async function build() {                                     // everything from the sheet: the entries, their figures, the Day End report
+      if (busy || done) return; busy = true;
+      try {
         const t0 = Date.now();
         while (S.outbox.length && Date.now() - t0 < 10000) { await sync(false); await new Promise(r => setTimeout(r, 600)); }   // today's entries go up first
-        try {
-          if (S.outbox.length) throw new Error('waiting');
-          const r = await authed('day_report', { date: d.date });
-          d.report = dy.report = dayReportText(S.profile.name, d, r); save('day');
-        } catch (e) { dy.report = dayReportText(S.profile.name, d, localTotals(d)); note = '  (no connection – the Day End figures are from this phone; open this page again when online for the exact ones)'; }
-      }
-      status.textContent = 'Making the PDF…';
-      blob = await makeWorkPdf(S.profile.name, title, null, [dy], true);
-      shareBtn.disabled = dlBtn.disabled = false; status.textContent = 'PDF ready: ' + fname + note;
-    })().catch(e => { status.textContent = e.message; status.className = 'hint bad'; });
+        if (S.outbox.length) throw Object.assign(new Error('waiting'), { offline: true });
+        await sync(true);
+        const dd = day();
+        const [ents, rep] = await Promise.all([sheetEntries(dd.date), authed('day_report', { date: dd.date })]);
+        const list = ents.map(e => ({ kind: e.kind, time: e.time, text: e.remote ? entryText(e, dd.date) : e.text, loc: e.loc || '' }));
+        const dy = { date: dd.date, in: dd.in, out: dd.out, inLoc: dd.inLoc || '', outLoc: dd.outLoc || '', list, role: S.profile.title || S.profile.position, report: dayReportText(S.profile.name, dd, rep) };
+        stats.replaceChildren(h('div', {}, h('small', {}, 'Check In'), h('b', {}, dd.in || '–')), h('div', {}, h('small', {}, 'Check Out'), h('b', {}, dd.out || '–')), h('div', {}, h('small', {}, 'Entries'), h('b', {}, String(list.length))));
+        locs.replaceChildren(h('p', { class: 'locline' }, 'Check In – Location: ' + locText(dy.inLoc)), h('p', { class: 'locline' }, 'Check Out – Location: ' + locText(dy.outLoc)));
+        rest.replaceChildren(h('section', { class: 'card' }, h('h3', {}, 'Today on the map'), mapSvg(dy)),
+          ...(list.length ? list.map((e, i) => h('section', { class: 'card entry' }, h('div', { class: 'row-between' }, h('h3', {}, 'Entry ' + (i + 1) + ':'), h('small', { class: 'hint' }, [e.kind, e.time].filter(Boolean).join(' · '))),
+                            h('p', { class: 'locline' }, 'Location: ' + locText(e.loc)), h('div', { class: 'entrytext' }, e.text.replace(/[_*]/g, ''))))
+                      : [h('section', { class: 'card' }, h('p', { class: 'hint' }, 'No visits or payments were logged today.'))]));
+        status.textContent = 'Making the PDF…'; status.className = 'hint';
+        blob = await makeWorkPdf(S.profile.name, title, null, [dy], true);
+        shareBtn.disabled = dlBtn.disabled = false; status.textContent = 'PDF ready: ' + fname; done = true;
+      } catch (e) {
+        if (e.offline) { if (!local) { try { await makeLocal(); } catch (e2) { status.textContent = e2.message; status.className = 'hint bad'; } } }
+        else { status.textContent = e.message; status.className = 'hint bad'; }
+      } finally { busy = false; }
+    }
+    build();
     function share() { if (blob) sharePdf(blob, fname, title); }
     function download() { if (blob) downloadBlob(blob, fname); }
-    currentView = { tick() { if (day().date !== U.todayIso()) home(); } };
+    currentView = { onData() { if (!done) build(); }, tick() { if (day().date !== U.todayIso()) home(); else if (!done) build(); } };
   }
 
   function reportCard(d) {
@@ -1035,25 +1097,25 @@
     const rangeBox = h('div', {}, h('div', { class: 'grid2' }, field('Start date', from), field('End date', to)),
       h('p', { class: 'hint' }, 'Every day the DSO ended with Check Out is included, each on its own page, exactly like the day’s PDF.'));
     const dayBox = h('div', { hidden: true }, field('Date', day1),
-      h('p', { class: 'hint' }, 'The Day End report of that day: the DSO’s orders and payments, and everyone’s month so far.'));
-    kind.addEventListener('change', () => { const e = kind.value === 'end'; rangeBox.hidden = e; dayBox.hidden = !e; result.replaceChildren(); say(msg, ''); });
+      h('p', { class: 'hint' }, 'The Day End report of that day for the whole team: everyone’s orders and payments that day, and the month so far.'));
+    const whoField = field('DSO', who);
+    kind.addEventListener('change', () => { const e = kind.value === 'end'; rangeBox.hidden = e; dayBox.hidden = !e; whoField.hidden = e; result.replaceChildren(); say(msg, ''); });
     main.append(h('section', { class: 'card' }, h('h3', {}, 'Generate Summary'),
-      field('Summary', kind), field('DSO', who), rangeBox, dayBox,
+      field('Summary', kind), whoField, rangeBox, dayBox,
       h('div', { class: 'submitbar' }, genBtn), msg), result);
     async function endDay() {
       if (busy) return;
-      const name = who.value, iso = day1.get();
+      const iso = day1.get();
       result.replaceChildren();
-      if (!name) return say(msg, 'Select the DSO.', true);
       if (!U.parseIso(iso)) return say(msg, 'Choose the date.', true);
-      busy = true; genBtn.disabled = true; say(msg, 'Getting ' + name + '’s day…');
+      busy = true; genBtn.disabled = true; say(msg, 'Getting the team’s day…');
       try {
         let r;
-        try { r = await authed('day_report', { dso: name, date: iso }); }
+        try { r = await authed('day_report', { date: iso }); }
         catch (e) { throw new Error(e.offline ? 'No internet – the End Day Summary needs a connection.' : e.message); }
         say(msg, '');
-        const card = reportCard({ date: iso, beat: r.beat, report: dayReportText(r.name || name, { date: iso, beat: r.beat }, r) });
-        card.querySelector('h3').textContent = 'End Day Summary – ' + (r.name || name) + ', ' + dmyFull(iso);
+        const card = reportCard({ date: iso, report: dayReportText('', { date: iso, team: true }, r) });
+        card.querySelector('h3').textContent = 'End Day Summary – everyone, ' + dmyFull(iso);
         result.append(card);
       } catch (e) { say(msg, e.message, true); }
       finally { busy = false; genBtn.disabled = false; }
@@ -1075,10 +1137,12 @@
       busy = true; genBtn.disabled = true; say(msg, 'Getting ' + name + '’s saved days…');
       try {
         let r;
-        try { r = await authed('day_summaries', { dso: name, from: a, to: b }); }
+        let ents;
+        try { [r, ents] = await Promise.all([authed('day_summaries', { dso: name, from: a, to: b }), authed('entries_of', { name, from: a, to: b })]); }
         catch (e) { throw new Error(e.offline ? 'No internet – the summary needs a connection to read the saved days.' : e.message); }
-        const nm = r.name || name;
-        const list = (r.days || []).map(x => ({ date: x.date, role: x.position, in: x.in, out: x.out, inLoc: x.inLoc, outLoc: x.outLoc, list: parseDayText(x.summary, x.times, x.locs), noEnd: !x.out }));
+        const nm = r.name || name, byDay = (ents && ents.days) || {};
+        const fromSheet = iso => ((byDay[iso] || {}).entries || []).map(e => ({ kind: e.kind, time: e.time, text: entryText(e, iso), loc: e.loc || '' }));   // the entries as the sheet has them now
+        const list = (r.days || []).map(x => ({ date: x.date, role: x.position, in: x.in, out: x.out, inLoc: x.inLoc, outLoc: x.outLoc, list: byDay[x.date] ? fromSheet(x.date) : parseDayText(x.summary, x.times, x.locs), noEnd: !x.out }));
         if (!list.length) { say(msg, nm + ' marked no attendance between ' + dmyFull(a) + ' and ' + dmyFull(b) + '.', true); return; }
         say(msg, 'Making the PDF…');
         const title = nm + '’s work from ' + dmyFull(a) + ' to ' + dmyFull(b);
@@ -1123,6 +1187,12 @@
   /* name: whose work. days: [{date, role, in, out, inLoc, outLoc, list:[{kind, time, text, loc}], noEnd}].
      range: null for one day's PDF, {from, to} for "Generate Summary". withMap: the day-end PDF gets the map of the day's points.
      Every day is laid out the same way: "<Name>'s work on <date>", Check In / Check Out (+ Location), Entries, the map (day-end only), then Entry 1:, Entry 2: … */
+  /* the times printed for Check In / Check Out: those of the first and the last entry (a late Check Out does not stretch the day);
+     with no entries, the real Check In / Check Out */
+  function shownTimes(dy) {
+    const ts = (dy.list || []).map(e => sval(e.time)).filter(Boolean);
+    return { in: ts[0] || dy.in || '-', out: dy.out ? (ts[ts.length - 1] || dy.out) : '-' };
+  }
   async function makeWorkPdf(name, title, range, days, withMap) {
     const { PDFDocument, StandardFonts, rgb } = await loadPdfLib();
     const doc = await PDFDocument.create();
@@ -1212,8 +1282,9 @@
     function drawDay(dy, size, map) {
       heading(name + '’s work on ' + dmyFull(dy.date), size);
       txt([dy.role || S.profile.title || S.profile.position, 'Entries: ' + dy.list.length].join('   |   '), M, 10, reg, muted); y -= 15;
-      txt('Check In: ' + (dy.in || '-'), M, 10, bold, ink); txt('Location: ' + locText(dy.inLoc), M + 150, 10, reg, ink); y -= 14;
-      txt('Check Out: ' + (dy.out || '-'), M, 10, bold, ink); txt('Location: ' + locText(dy.outLoc), M + 150, 10, reg, ink); y -= 12;
+      const st = shownTimes(dy);
+      txt('Check In: ' + st.in, M, 10, bold, ink); txt('Location: ' + locText(dy.inLoc), M + 150, 10, reg, ink); y -= 14;
+      txt('Check Out: ' + st.out, M, 10, bold, ink); txt('Location: ' + locText(dy.outLoc), M + 150, 10, reg, ink); y -= 12;
       page.drawLine({ start: { x: M, y }, end: { x: W - M, y }, thickness: 1.2, color: navy }); y -= 16;
       if (dy.noEnd) { txt('This day was not ended with Check Out.', M, 10, bold, gold); y -= 20; }
       if (map) drawMap(dy);
@@ -1240,7 +1311,7 @@
       page.drawLine({ start: { x: M, y }, end: { x: W - M, y }, thickness: 1.2, color: navy }); y -= 16;
       days.forEach(dy => {                                       // contents: one line per day
         need(LH);
-        txt(dmyFull(dy.date) + '   -   Check In: ' + (dy.in || '-') + '   Check Out: ' + (dy.out || '-') + '   Entries: ' + dy.list.length + (dy.noEnd ? '   (not ended)' : ''), M, FS, reg, ink); y -= LH;
+        txt(dmyFull(dy.date) + '   -   Check In: ' + shownTimes(dy).in + '   Check Out: ' + shownTimes(dy).out + '   Entries: ' + dy.list.length + (dy.noEnd ? '   (not ended)' : ''), M, FS, reg, ink); y -= LH;
       });
       days.forEach(dy => { newPage(); drawDay(dy, 18, true); });    // every date on its own page(s), with its map
     }
@@ -1267,7 +1338,7 @@
     const ent = (opts && opts.entry) || null, mode = ent ? (opts.mode || 'view') : 'new';   // 'new' | 'view' (read only) | 'edit'
     const remote = !!(ent && ent.remote);                          // the Head opening anyone's entry from "Previous Entries"
     if (!canWork() || (ent && !ent.form)) return home();
-    const main = shell(mode === 'new' ? 'Log Visits' : (mode === 'view' ? 'Entry ' : 'Edit Entry ') + (remote ? ent.no : entryNo(ent)), remote ? () => headEntriesView() : ent ? entriesView : home,
+    const main = shell(mode === 'new' ? 'Log Visits' : (mode === 'view' ? 'Entry ' : 'Edit Entry ') + (remote ? ent.no : entryNo(ent)), remote ? backToList : ent ? entriesView : home,
       mode === 'view' ? pencilBtn(() => visitView({ entry: ent, mode: 'edit' })) : null);
     Loc.refresh();
     const msg = msgBox(), isHead = S.profile.position === 'Head of Operations';
@@ -1311,7 +1382,7 @@
       h('section', { class: 'card' }, h('h3', {}, 'Order – products, quantity and rate'), area.el, termsField),
       h('section', { class: 'card' }, h('h3', {}, 'Payment received'), pay.el)];
     if (mode === 'view') { const fs = h('fieldset', { class: 'ro' }, ...sections); fs.disabled = true; main.append(fs); }
-    else main.append(...sections, mode === 'edit' ? editBar(submit, msg, () => visitView({ entry: ent, mode: 'edit' }), remote ? () => headEntriesView() : () => entriesView()) : submitBar('SUBMIT VISIT', submit, () => clearForm(true), msg));
+    else main.append(...sections, mode === 'edit' ? editBar(submit, msg, () => visitView({ entry: ent, mode: 'edit' }), remote ? backToList : () => entriesView()) : submitBar('SUBMIT VISIT', submit, () => clearForm(true), msg));
     termsUpdate(); syncBeat();
     if (ent) {                                                     // reopen the entry as it was saved
       const f = ent.form;
@@ -1333,9 +1404,6 @@
       [market, counter, remarks, cd.typeCombo].forEach(c => c.commit()); area.commitAll();
       const job = tryRun(build, msg); if (!job) return;
       submitJob(job);
-      if (job.order && !remote) noteOrder(job.order.who, job.order.no, job.order.value);
-      if (!remote && (job.payTotal || ent)) notePay(job.entry.id, job.payTotal || 0);
-      if (ent && !remote && ent.orderNo && (!job.order || job.order.no !== ent.orderNo)) noteOrder(dsoName(), ent.orderNo, 0);   // the order was removed in the edit
       if (remote) { remoteSaved(ent, job); return; }
       if (ent) { updateEntry(ent, job); entriesView(); submitted(() => showSummary(job.summary)); return; }
       addEntry('Visit', job.summary, job.loc, job.entry);
@@ -1364,18 +1432,18 @@
       const newMarket = !isHead && beat && !model.marketsFor(beat).some(m => m.toUpperCase() === mk) && (model.dsoMarkets || {})[beat.toLowerCase()] ? { beat, market: mk } : null;
       const orders = [];
       let ono = '', orderTotal = 0, cumulative = 0;
-      const entryId = ent ? ent.id : U.uuid();
+      const entryId = ent ? ent.id : U.uuid(), etime = (ent && ent.time) || nowTime();   // an edit keeps the time the entry was first made
       if (lines.length) {
         const total = lines.reduce((a, l) => a + l.qty * l.rate, 0);
         const keep = ent && ent.orderNo && (!remote || ent.orderNo.toLowerCase().indexOf('-' + dso.toLowerCase() + '-') > 0);
         ono = keep ? ent.orderNo : remote ? nextNo(dso, ds, ent.dayOrders) : nextOrderNo(dso, ds); orderTotal = roundRupee(total);      // an edited order keeps its Order No.
-        const others = remote ? Object.assign({}, ent.dayOrders || {}) : allOrders(ds); delete others[ono]; if (ent && ent.orderNo) delete others[ent.orderNo];   // everyone's orders of the day
-        cumulative = Object.values(others).reduce((a, v) => a + (+v || 0), 0) + orderTotal;
+        if (remote) cumulative = (ent.cumOrders || 0) - (ent.orderNo ? ((ent.dayOrders || {})[ent.orderNo] || 0) : 0) + orderTotal;   // its running total, changed by the edit
+        else { const others = allOrders(ds); delete others[ono]; if (ent && ent.orderNo) delete others[ent.orderNo]; cumulative = Object.values(others).reduce((a, v) => a + (+v || 0), 0) + orderTotal; }
         const nd = TERM_DAYS[tm] ? U.addDays(ds, TERM_DAYS[tm]) : '';
         const wk = nd ? (model.beatForDate(nd) || U.weekday(nd)) : '';
-        lines.forEach(l => orders.push({ dso, 'entry id': entryId, 'order no.': ono, 'orders taken': lines.length, 'order value': roundRupee(total), 'counter name': name, 'market code': marketCodeOf(mk), 'counter code': code, date: ds, 'payment terms': tm, 'next payment date': nd, weekday: wk, type: l.type, item: l.item, 'sub item': l.sub, colour: l.colour, qty: l.qty, price: plain(l.rate), 'price x qty': plain(U.mul(l.qty, l.rate)) }));
+        lines.forEach(l => orders.push({ dso, 'entry id': entryId, 'order no.': ono, 'orders taken': lines.length, 'order value': roundRupee(total), 'counter name': name, 'market code': marketCodeOf(mk), 'counter code': code, date: ds, 'payment terms': tm, 'next payment date': nd, weekday: wk, type: l.type, item: l.item, 'sub item': l.sub, colour: l.colour, qty: l.qty, price: plain(l.rate), 'price x qty': plain(U.mul(l.qty, l.rate)), 'entry time': etime }));
       }
-      const visit = { dso, 'entry id': entryId, 'logged by': isHead ? dso : '', date: ds, beat, market: mk, 'counter name': name, 'counter code': code, mobile, 'counter type': ctype, 'gstin/pan': gstin, orders: lines.length, productive: lines.length ? 'YES' : 'NO', remarks: rem, 'interest in cooler': cooler.value, 'priority visit date': pdays ? U.addDays(ds, pdays) : '', location: ent ? (ent.loc || '') : Loc.get() };
+      const visit = { dso, 'entry id': entryId, 'logged by': isHead ? dso : '', date: ds, beat, market: mk, 'counter name': name, 'counter code': code, mobile, 'counter type': ctype, 'gstin/pan': gstin, orders: lines.length, productive: lines.length ? 'YES' : 'NO', remarks: rem, 'interest in cooler': cooler.value, 'priority visit date': pdays ? U.addDays(ds, pdays) : '', location: ent ? (ent.loc || '') : Loc.get(), 'entry time': etime };
       const parts = [];
       if (ent) parts.push({ kind: 'replace_entry', id: entryId, date: ds });       // the server swaps the old rows for these
       if (fill && Object.keys(fill).length) parts.push({ kind: 'fill', code, values: fill, replace });
@@ -1383,7 +1451,7 @@
       if (newMarket) parts.push({ kind: 'market', beat: newMarket.beat, market: newMarket.market });
       if (orders.length) parts.push({ sheet: 'Orders', rows: orders });
       if (pays.length) {
-        const row = { date: ds, 'entry id': entryId, market: mk, 'counter name': name, 'counter code': code, total: plain(pays.reduce((a, p) => a + p.amount, 0)) };
+        const row = { date: ds, 'entry id': entryId, market: mk, 'counter name': name, 'counter code': code, total: plain(pays.reduce((a, p) => a + p.amount, 0)), 'entry time': etime };
         if (isHead) { row['received by'] = dso; row['logged by'] = dso; }
         pays.forEach(p => { row[p.mode.toLowerCase()] = plain(p.amount); });
         parts.push({ sheet: 'Payments Received', rows: [row] });
@@ -1401,12 +1469,13 @@
         sum.push('*Order Value:* ' + money(orderTotal), '_*Daily Cumulative:*_ ' + money(cumulative), 'Payment Terms: ' + tm);
       }
       const payTot = pays.reduce((a, p) => a + p.amount, 0);
-      if (pays.length) sum.push('', '_*Payments:*_', ...payText(pays), '_*Daily Cumulative:*_ ' + money(plain(payCumulative(ent, remote, entryId, payTot, ds))));
+      const payCumV = pays.length ? plain(payCumulative(ent, remote, entryId, payTot, ds)) : 0;
+      if (pays.length) sum.push('', '_*Payments:*_', ...payText(pays), '_*Daily Cumulative:*_ ' + money(payCumV));
       const types = {}; lines.forEach(l => { const t = sval(l.type) || 'Other'; types[t] = (types[t] || 0) + l.qty * l.rate; });
       const cat = lines.length && pays.length ? 'Order and Payment' : lines.length ? 'Order on Visit' : pays.length ? 'Payment on Visit' : 'Visit only';
-      const entry = { id: entryId, cat, market: mk, counter: name, orderNo: ono, types, pays, by: isHead ? dso : '',
+      const entry = { id: entryId, time: etime, cat, market: mk, counter: name, orderNo: ono, types, pays, by: isHead ? dso : '',
         form: { by: isHead ? dso : '', outBeat, market: mk, counter: name, remarks: rem, cooler: cooler.value, lines: lines.map(l => ({ type: l.type, item: l.item, sub: l.sub, colour: l.colour, qty: l.qty, rate: l.rate })), terms: tm, pays } };
-      return { id: U.uuid(), label, summary: sum.join('\n'), parts, entry, loc: visit.location || '', payTotal: payTot, pays: pays.length ? pays : null, order: ono ? { who: dso, no: ono, value: orderTotal, types } : null,
+      return { id: U.uuid(), date: ds, cumOrders: cumulative, cumPays: payCumV, dropOrder: ent && ent.orderNo && ent.orderNo !== ono ? ent.orderNo : '', label, summary: sum.join('\n'), parts, entry, loc: visit.location || '', payTotal: payTot, pays: pays.length ? pays : null, order: ono ? { who: dso, no: ono, value: orderTotal, types } : null,
         overlay: { visit, orders, newCounter: existing ? null : { market: mk, name, code, mobile, type: ctype, gstin }, newMarket: newMarket ? { beat, market: mk } : null, fill: fill && Object.keys(fill).length ? Object.assign({ code, replace }, fill) : null } };
     }
   }
@@ -1416,7 +1485,7 @@
     const ent = (opts && opts.entry) || null, mode = ent ? (opts.mode || 'view') : 'new';
     const remote = !!(ent && ent.remote);
     if (!canWork() || (ent && !ent.form)) return home();
-    const main = shell(mode === 'new' ? 'Log Payments' : (mode === 'view' ? 'Entry ' : 'Edit Entry ') + (remote ? ent.no : entryNo(ent)), remote ? () => headEntriesView() : ent ? entriesView : home,
+    const main = shell(mode === 'new' ? 'Log Payments' : (mode === 'view' ? 'Entry ' : 'Edit Entry ') + (remote ? ent.no : entryNo(ent)), remote ? backToList : ent ? entriesView : home,
       mode === 'view' ? pencilBtn(() => payView({ entry: ent, mode: 'edit' })) : null);
     Loc.refresh();
     const msg = msgBox(), isHead = S.profile.position === 'Head of Operations';
@@ -1458,27 +1527,27 @@
           if (!pays.length) throw new Error('No payment added.\nTap “＋ Payment”, enter the amount and select the payment mode.');
           const total = pays.reduce((a, p) => a + p.amount, 0);
           const entryId = ent ? ent.id : U.uuid();
-          const row = { date: ds, 'entry id': entryId, market: mk, 'counter name': c.name, 'counter code': c.code, total: plain(total) };
+          const row = { date: ds, 'entry id': entryId, market: mk, 'counter name': c.name, 'counter code': c.code, total: plain(total), 'entry time': (ent && ent.time) || nowTime(), location: ent ? (ent.loc || '') : Loc.get() };
           if (isHead) { row['received by'] = by.get(); row['logged by'] = by.get(); }
           pays.forEach(p => { row[p.mode.toLowerCase()] = plain(p.amount); });
+          const payCumV = plain(payCumulative(ent, remote, entryId, total, ds));
           const summary = ['_*Details:*_', 'Date: ' + dmyShort(ds), 'Market: ' + mk, 'Counter: ' + c.name, '', '_*Payments:*_', ...payText(pays), '*Total:* ' + money(total),
-                           '_*Daily Cumulative:*_ ' + money(plain(payCumulative(ent, remote, entryId, total, ds)))].join('\n');
+                           '_*Daily Cumulative:*_ ' + money(payCumV)].join('\n');
           const parts = ent ? [{ kind: 'replace_entry', id: entryId, date: ds }] : [];
           parts.push({ sheet: 'Payments Received', rows: [row] });
           const pb = isHead ? by.get() : '';
-          const entry = { id: entryId, cat: 'Payment without Visit', market: mk, counter: c.name, pays, types: {}, by: pb, form: { by: pb, market: mk, counter: c.name, pays } };
-          return { id: U.uuid(), label: c.name + '  |  payment ₹' + roundRupee(total).toLocaleString('en-IN'), summary, parts, entry, overlay: null, pays, payTotal: total };
+          const entry = { id: entryId, time: row['entry time'], cat: 'Payment without Visit', market: mk, counter: c.name, pays, types: {}, by: pb, form: { by: pb, market: mk, counter: c.name, pays } };
+          return { id: U.uuid(), date: ds, cumPays: payCumV, label: c.name + '  |  payment ₹' + roundRupee(total).toLocaleString('en-IN'), summary, parts, entry, overlay: null, pays, payTotal: total };
         }, msg);
         if (!job) return;
         submitJob(job);
-        if (!remote) notePay(job.entry.id, job.payTotal || 0);
         if (remote) { remoteSaved(ent, job); return; }
         if (ent) { updateEntry(ent, job); entriesView(); submitted(() => showSummary(job.summary)); return; }
         addEntry('Payment', job.summary, Loc.get(), job.entry);
         say(msg, '');
         submitted(() => showSummary(job.summary)); clearForm();
     };
-    main.append(mode === 'edit' ? editBar(submitPay, msg, () => payView({ entry: ent, mode: 'edit' }), remote ? () => headEntriesView() : () => entriesView()) : submitBar('SUBMIT PAYMENT', submitPay, clearForm, msg));
+    main.append(mode === 'edit' ? editBar(submitPay, msg, () => payView({ entry: ent, mode: 'edit' }), remote ? backToList : () => entriesView()) : submitBar('SUBMIT PAYMENT', submitPay, clearForm, msg));
   }
 
   /* ------------------------------------------------------------------ Accountant */
@@ -1745,18 +1814,20 @@
     if (HE.list) {
       const i = HE.list.findIndex(e => e.id === ent.id);
       if (i >= 0) {
-        const e = Object.assign({}, HE.list[i], job.entry, { remote: true, edited: nowTime() });
+        const e = Object.assign({}, HE.list[i], job.entry, { remote: true, edited: nowTime(), payTotal: job.payTotal || 0, cumPays: job.cumPays || 0, cumOrders: job.cumOrders || 0, time: ent.time });
         if (job.order) { e.dayOrders = Object.assign({}, e.dayOrders || {}); if (ent.orderNo) delete e.dayOrders[ent.orderNo]; e.dayOrders[job.order.no] = job.order.value; }
         HE.list[i] = e;
         const dp = (ent.dayPays || 0) - (ent.form.pays || []).reduce((a, p) => a + p.amount, 0) + (job.payTotal || 0);
         HE.list.forEach(x => { if (x.kind !== 'Invoice') { x.dayOrders = HE.list[i].dayOrders || x.dayOrders; x.dayPays = dp; } });
       }
     }
-    headEntriesView(); submitted(() => showSummary(job.summary));
+    if (!isHeadUser()) updateEntry(ent, job);                    // this phone's own copy too
+    backToList(); submitted(() => showSummary(job.summary));
   }
   function headEntriesView(role) {                               // role: 'DSO' (from As DSO) or 'Manager' (from As Manager)
     if (!isHeadUser()) return home();
     if (role && role !== HE.role) { HE.role = role; HE.name = ''; HE.list = null; }
+    HE.mine = false;
     const main = shell('Previous Entries', home), msg = msgBox();
     if (!HE.date) HE.date = U.todayIso();
     const who = h('select', { class: 'inp' }, h('option', { value: '' }, HE.team ? '---- Select ----' : 'Loading…'));
@@ -1874,9 +1945,11 @@
       if (PNL.mode === 'general') {
         const head = ['Day', 'No. of items sold', 'Sale Price', 'Buy Price', 'Profit', 'Profit %'];
         const days = [], last = +today.slice(8, 10);
-        for (let i = 1; i <= last; i++) { const iso = ym + '-' + String(i).padStart(2, '0'); days.push(rowOf(dmyFull(iso).slice(0, 5), sum(ok.filter(x => x.d === iso)))); }
+        const futureD = ok.filter(x => x.d.slice(0, 7) === ym && +x.d.slice(8, 10) > last).map(x => +x.d.slice(8, 10));   // invoices dated after today
+        const lastD = Math.max(last, ...futureD);
+        for (let i = 1; i <= lastD; i++) { const iso = ym + '-' + String(i).padStart(2, '0'), t = sum(ok.filter(x => x.d === iso)); if (i > last && !t.q) continue; const r = rowOf(dmyFull(iso).slice(0, 5) + (i > last ? ' ⚠' : ''), t); if (i > last) r.cls = 'future'; days.push(r); }
         const mrows = [], lastM = +today.slice(5, 7);
-        for (let m = 1; m <= lastM; m++) { const k = yr + '-' + String(m).padStart(2, '0'); mrows.push(rowOf(MONTHS[m - 1] + ' ' + yr, sum(ok.filter(x => x.d.slice(0, 7) === k)))); }
+        for (let m = 1; m <= 12; m++) { const k = yr + '-' + String(m).padStart(2, '0'), t = sum(ok.filter(x => x.d.slice(0, 7) === k)); if (m > lastM && !t.q) continue; const r = rowOf(MONTHS[m - 1] + ' ' + yr + (m > lastM ? ' ⚠' : ''), t); if (m > lastM) r.cls = 'future'; mrows.push(r); }
         const years = [...new Set(ok.map(x => x.d.slice(0, 4)).concat([yr]))].sort();
         const yrows = years.map(y => rowOf(y, sum(ok.filter(x => x.d.slice(0, 4) === y))));
         const tot = (label, list) => rowOf(label, sum(list));
@@ -1899,6 +1972,7 @@
           h('section', { class: 'card' }, h('h3', {}, 'This month – ' + MONTHS[+ym.slice(5) - 1] + ' ' + yr), prodTable(ok.filter(x => month0(x.d))), ...missRows(month0)),
           h('section', { class: 'card' }, h('h3', {}, 'This year – ' + yr), prodTable(ok.filter(x => year0(x.d))), ...missRows(year0)));
       }
+      if (PNL.mode === 'general' && body.querySelector('tr.future')) body.prepend(h('div', { class: 'msg bad' }, '⚠ Some invoices in the Invoice Record are dated after today. They are shown on their own rows – check those dates in the sheet.'));
       body.append(h('p', { class: 'hint' }, (PNL.gst === 'ex' ? 'ex-GST: amounts × 100/118. ' : 'in-GST: amounts as in the invoices. ') + 'Profit % = Profit ÷ Buy Price × 100.'));
     }
     async function load() {

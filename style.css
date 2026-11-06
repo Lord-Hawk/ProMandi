@@ -245,3 +245,5 @@ table.pnl td:first-child{min-width:44px}
 .mapkey span{display:inline-flex;align-items:center;gap:6px}
 .mapkey .k{width:24px;height:24px;border-radius:50%;display:inline-grid;place-items:center;font:700 9.5px/1 system-ui,sans-serif;color:#fff;font-style:normal}
 .mapkey .k.in{background:#0F7A55}.mapkey .k.entry{background:#111827}.mapkey .k.out{background:#B42318}
+
+table.pnl tr.future td{background:#fff7ed;color:#9a3412}
