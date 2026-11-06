@@ -1193,6 +1193,10 @@
     const ts = (dy.list || []).map(e => sval(e.time)).filter(Boolean);
     return { in: ts[0] || dy.in || '-', out: dy.out ? (ts[ts.length - 1] || dy.out) : '-' };
   }
+  function shownDay(dy) {
+    const ls = (dy.list || []).filter(e => parseLatLon(e.loc));
+    return Object.assign({}, dy, { inLoc: ls.length ? ls[0].loc : dy.inLoc, outLoc: dy.out && ls.length ? ls[ls.length - 1].loc : dy.outLoc });
+  }
   async function makeWorkPdf(name, title, range, days, withMap) {
     const { PDFDocument, StandardFonts, rgb } = await loadPdfLib();
     const doc = await PDFDocument.create();
@@ -1279,7 +1283,8 @@
       y -= 6; need(14); page.drawLine({ start: { x: M, y }, end: { x: W - M, y }, thickness: 1.2, color: navy }); y -= 16;
     }
     const heading = (text, size) => { txt(text, M, size, bold, navy); y -= size + 10; };
-    function drawDay(dy, size, map) {
+    function drawDay(dy0, size, map) {
+      const dy = shownDay(dy0);                                   // Check In / Check Out as the first / last entry (time and place)
       heading(name + '’s work on ' + dmyFull(dy.date), size);
       txt([dy.role || S.profile.title || S.profile.position, 'Entries: ' + dy.list.length].join('   |   '), M, 10, reg, muted); y -= 15;
       const st = shownTimes(dy);
